@@ -4,7 +4,7 @@ import * as CANNON from 'cannon-es';
 import { getRandomWord, isVerb, getWordTypes, isValidWord, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v1.5.6';
+const VERSION = 'v1.6.0';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -232,7 +232,7 @@ scene.add(structureGroup);
 
 const cubes = [];       // { letter, gx, gy, gz, mesh, wordIdx }
 const words = [];       // { text, dir, isVerb, arrowHelper }
-const VERB_FORCE = 25;  // force per letter (applied each physics substep)
+const VERB_FORCE = 3;   // force per letter (applied each physics substep)
 const VERB_DELAY = 3;   // seconds before verb activates
 const GRAVITY = 20;
 
@@ -245,7 +245,7 @@ const groundMat = new CANNON.Material('ground');
 const structureMat = new CANNON.Material('structure');
 world.addContactMaterial(new CANNON.ContactMaterial(groundMat, structureMat, {
   restitution: 0.05,
-  friction: 0.6,
+  friction: 0.12,
 }));
 
 // Apply verb forces once per physics substep for consistency
@@ -274,13 +274,14 @@ let currentDir = 'x+'; // current build direction (controlled by Shift+IJKL)
 let currentLevel = 1;
 const levelObstacles = []; // meshes added per level (walls, platforms, zones)
 const letterZones = [];    // { x, z, size, type: '+'/'-', letter, mesh }
+const debrisPieces = [];   // { group, body, cubes } — detached grey fragments
 
 // ── Animation queue ──
 const animations = [];  // { mesh, startTime, duration }
 const BLOCK_ANIM_DURATION = 0.25; // seconds per block scale-in
 
 // ── Sequential letter placement queue ──
-let _placementQueue = null; // { letters: [...], index, wordEntry, onDone }
+let _placementQueue = null;
 
 // ── Cannon body management ──
 function createStructureBody() {
@@ -513,7 +514,6 @@ function placeWord(text, startGx, startGz, dir, wordIdx, animated = false, start
     startGx,
     startGy,
     startGz,
-    currentAnim: null,
   };
   _placeNextLetter(); // start first one immediately
   return { verb };
@@ -525,6 +525,7 @@ function _placeNextLetter() {
   if (q.index >= q.letters.length) {
     _addVerbArrow(q.wordEntry, q.dirVec, q.text, q.wordIdx);
     _placementQueue = null;
+    clearGhosts();
     // Select the last letter of the word
     const dv = q.dirVec;
     const lastIdx = q.text.length - 1;
@@ -547,19 +548,37 @@ function _placeNextLetter() {
   const l = q.letters[q.index];
   const mesh = makeLetterMesh(l.letter, l.verb);
 
-  // Start at the previous cube's position (parent), slide to target
-  const prev = q.index > 0 ? q.letters[q.index - 1] : null;
-  const fromX = prev ? prev.gx : (l.gx - q.dirVec.x);
-  const fromY = prev ? (0.5 + prev.gy) : (0.5 + l.gy - (q.dirVec.y || 0));
-  const fromZ = prev ? prev.gz : (l.gz - q.dirVec.z);
-  mesh.position.set(fromX, fromY, fromZ);
+  // Materialize at final grid position — no sliding
+  mesh.position.set(l.gx, 0.5 + l.gy, l.gz);
+  mesh.scale.set(0, 0, 0);
 
   structureGroup.add(mesh);
   const cube = { letter: l.letter, gx: l.gx, gy: l.gy, gz: l.gz, mesh, wordIdx: l.wordIdx };
   mesh.userData.cube = cube;
   cubes.push(cube);
 
+  // Fade out the ghost at this position
   const now = performance.now() / 1000;
+  const matchingGhost = _ghostMeshes.find(g =>
+    Math.round(g.position.x) === l.gx &&
+    Math.round(g.position.z) === l.gz &&
+    Math.round(g.position.y - 0.5) === l.gy
+  );
+  if (matchingGhost) {
+    animations.push({
+      mesh: matchingGhost,
+      startTime: now,
+      duration: BLOCK_ANIM_DURATION * 0.5,
+      isFadeOut: true,
+      soundPlayed: true,
+      onComplete: () => {
+        structureGroup.remove(matchingGhost);
+        const gi = _ghostMeshes.indexOf(matchingGhost);
+        if (gi !== -1) _ghostMeshes.splice(gi, 1);
+      },
+    });
+  }
+
   audio.pop(q.index);
   animations.push({
     mesh,
@@ -567,11 +586,9 @@ function _placeNextLetter() {
     duration: BLOCK_ANIM_DURATION,
     soundIndex: q.index,
     soundPlayed: true,
-    isSlide: true,
-    fromX, fromY, fromZ,
-    toX: l.gx, toY: 0.5 + l.gy, toZ: l.gz,
+    isMaterialize: true,
     onComplete: () => {
-      mesh.position.set(l.gx, 0.5 + l.gy, l.gz);
+      mesh.scale.set(1, 1, 1);
       createStructureBody();
       q.index++;
       _placeNextLetter();
@@ -648,14 +665,22 @@ function updateAnimations() {
         if (ci !== -1) cubes.splice(ci, 1);
         animations.splice(i, 1);
       }
-    } else if (a.isSlide) {
-      // Slide from parent cube to target position
+    } else if (a.isMaterialize) {
+      // Scale in with slight overshoot
       const ease = t < 1 ? 1 - Math.pow(1 - t, 3) : 1;
-      a.mesh.position.set(
-        a.fromX + (a.toX - a.fromX) * ease,
-        a.fromY + (a.toY - a.fromY) * ease,
-        a.fromZ + (a.toZ - a.fromZ) * ease
-      );
+      const s = t < 0.85
+        ? ease
+        : 1 + Math.sin((t - 0.85) / 0.15 * Math.PI) * 0.06;
+      a.mesh.scale.set(s, s, s);
+      if (t >= 1) {
+        a.mesh.scale.set(1, 1, 1);
+        animations.splice(i, 1);
+        if (a.onComplete) a.onComplete();
+      }
+    } else if (a.isFadeOut) {
+      // Fade out ghost mesh
+      const mats = Array.isArray(a.mesh.material) ? a.mesh.material : [a.mesh.material];
+      for (const m of mats) m.opacity = 0.4 * (1 - t);
       if (t >= 1) {
         animations.splice(i, 1);
         if (a.onComplete) a.onComplete();
@@ -875,42 +900,174 @@ function getZoneAt(wx, wz) {
   return null;
 }
 
+function makeGreyMesh(letter) {
+  const mats = [];
+  for (let i = 0; i < 6; i++) {
+    const c = document.createElement('canvas');
+    c.width = 128; c.height = 128;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#777';
+    ctx.fillRect(0, 0, 128, 128);
+    ctx.strokeStyle = '#555';
+    ctx.lineWidth = 4;
+    ctx.strokeRect(2, 2, 124, 124);
+    ctx.fillStyle = '#333';
+    ctx.font = 'bold 78px Arial';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(letter, 64, 68);
+    const tex = new THREE.CanvasTexture(c);
+    mats.push(new THREE.MeshStandardMaterial({ map: tex }));
+  }
+  return new THREE.Mesh(new THREE.BoxGeometry(0.94, 0.94, 0.94), mats);
+}
+
+// Find connected components among cubes using adjacency (6-connected)
+function _findComponents(cubeList) {
+  const visited = new Set();
+  const components = [];
+  const key = c => `${c.gx},${c.gy || 0},${c.gz}`;
+  const cubeMap = new Map();
+  for (const c of cubeList) cubeMap.set(key(c), c);
+
+  for (const c of cubeList) {
+    const k = key(c);
+    if (visited.has(k)) continue;
+    const component = [];
+    const stack = [c];
+    while (stack.length) {
+      const cur = stack.pop();
+      const ck = key(cur);
+      if (visited.has(ck)) continue;
+      visited.add(ck);
+      component.push(cur);
+      // Check 6 neighbors
+      for (const [dx, dy, dz] of [[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]]) {
+        const nk = `${cur.gx + dx},${(cur.gy || 0) + dy},${cur.gz + dz}`;
+        if (cubeMap.has(nk) && !visited.has(nk)) stack.push(cubeMap.get(nk));
+      }
+    }
+    components.push(component);
+  }
+  return components;
+}
+
+function _spawnDebris(debrisCubes) {
+  // Create a new group and body for this chunk
+  const group = new THREE.Group();
+  scene.add(group);
+
+  // Compute world positions from structureGroup
+  const q = structureGroup.quaternion;
+  const gp = structureGroup.position;
+
+  // Compute local COM for debris
+  let cx = 0, cy = 0, cz = 0;
+  for (const c of debrisCubes) { cx += c.gx; cy += 0.5 + (c.gy || 0); cz += c.gz; }
+  cx /= debrisCubes.length; cy /= debrisCubes.length; cz /= debrisCubes.length;
+
+  // World position of COM
+  const comLocal = new THREE.Vector3(cx, cy, cz);
+  comLocal.applyQuaternion(q);
+  const worldPos = comLocal.add(gp);
+
+  for (const c of debrisCubes) {
+    // Remove from main structure
+    structureGroup.remove(c.mesh);
+    const idx = cubes.indexOf(c);
+    if (idx !== -1) cubes.splice(idx, 1);
+
+    // Create grey replacement at local offset from debris COM
+    const grey = makeGreyMesh(c.letter);
+    grey.position.set(c.gx - cx, 0.5 + (c.gy || 0) - cy, c.gz - cz);
+    grey.castShadow = true;
+    group.add(grey);
+  }
+
+  // Position and rotate group to match structure
+  group.position.copy(worldPos);
+  group.quaternion.copy(q);
+
+  // Physics body
+  const body = new CANNON.Body({
+    mass: debrisCubes.length,
+    material: structureMat,
+    linearDamping: 0.05,
+    angularDamping: 0.05,
+  });
+  const half = new CANNON.Vec3(0.47, 0.47, 0.47);
+  for (const c of debrisCubes) {
+    body.addShape(
+      new CANNON.Box(half),
+      new CANNON.Vec3(c.gx - cx, 0.5 + (c.gy || 0) - cy, c.gz - cz)
+    );
+  }
+  body.position.set(worldPos.x, worldPos.y, worldPos.z);
+  body.quaternion.set(q.x, q.y, q.z, q.w);
+
+  // Copy velocity from main structure
+  if (structureBody) {
+    body.velocity.copy(structureBody.velocity);
+    body.angularVelocity.copy(structureBody.angularVelocity);
+  }
+  world.addBody(body);
+
+  debrisPieces.push({ group, body, cubes: debrisCubes });
+}
+
 function deleteWord(wordIdx) {
   const w = words[wordIdx];
   if (!w || w._deleted) return;
   w._deleted = true;
 
-  // Remove arrow
-  if (w.arrowHelper) {
-    structureGroup.remove(w.arrowHelper);
-  }
-  // Remove timer sprite
-  if (w.timerSprite) {
-    structureGroup.remove(w.timerSprite);
-  }
+  // Remove arrow and timer
+  if (w.arrowHelper) structureGroup.remove(w.arrowHelper);
+  if (w.timerSprite) structureGroup.remove(w.timerSprite);
 
-  // Shrink-remove cubes that belong only to this word
-  const now = performance.now() / 1000;
+  // Remove cubes that belong only to this word
+  const toRemove = [];
   for (let i = cubes.length - 1; i >= 0; i--) {
     const c = cubes[i];
     if (c.wordIdx !== wordIdx) continue;
-
-    // Check if another word also uses this position
-    const shared = cubes.some(
-      (other, oi) => oi !== i && other.gx === c.gx && other.gz === c.gz
-    );
+    const shared = cubes.some((other, oi) => oi !== i && other.gx === c.gx && other.gz === c.gz && (other.gy || 0) === (c.gy || 0));
     if (shared) continue;
+    toRemove.push(c);
+  }
 
-    // Shrink animation then remove
+  // Shrink-remove the deleted cubes
+  const now = performance.now() / 1000;
+  for (const c of toRemove) {
     animations.push({
       mesh: c.mesh,
       startTime: now,
       duration: 0.2,
       soundIndex: 0,
-      soundPlayed: true, // don't play pop
+      soundPlayed: true,
       isShrink: true,
     });
   }
+
+  // After shrink completes, check for disconnected components
+  setTimeout(() => {
+    if (cubes.length === 0) return;
+    const components = _findComponents(cubes);
+    if (components.length <= 1) {
+      createStructureBody();
+      return;
+    }
+
+    // Keep the largest component as main structure
+    components.sort((a, b) => b.length - a.length);
+    const mainCubes = components[0];
+
+    // Spawn debris for all smaller components
+    for (let i = 1; i < components.length; i++) {
+      _spawnDebris(components[i]);
+    }
+
+    // Rebuild main structure body with only mainCubes remaining
+    createStructureBody();
+  }, 250); // wait for shrink animation
 }
 
 function updateLetterZones() {
@@ -1236,6 +1393,13 @@ function startLevel() {
   for (const b of wallBodies) world.removeBody(b);
   wallBodies.length = 0;
 
+  // Remove debris
+  for (const d of debrisPieces) {
+    scene.remove(d.group);
+    world.removeBody(d.body);
+  }
+  debrisPieces.length = 0;
+
   // Build floor for this level
   if (currentLevel === 4) {
     // Two islands with a gap
@@ -1378,6 +1542,7 @@ canvas.addEventListener('pointerup', (e) => {
 
   if (hits.length > 0) {
     const cube = hits[0].object.userData.cube;
+    if (!cube || cube._debris) { return; }
     selectedCube = cube;
     highlightCube(cube);
     selectedInfoEl.textContent = `Selected: [${cube.letter}] at (${cube.gx}, ${cube.gz})`;
@@ -1477,7 +1642,6 @@ function spinWordType(word, types) {
 // ── Word submission ──
 function submitWord() {
   if (!selectedCube || levelComplete || _placementQueue) return;
-  clearGhosts();
   const text = wordInput.value.toUpperCase().trim();
   if (text.length < 2) {
     showMessage('Word must be at least 2 letters');
@@ -1839,6 +2003,11 @@ function updatePhysics(dt) {
   world.step(1 / 120, dt, 5);
   syncGroupFromBody();
 
+  // Sync debris pieces
+  for (const d of debrisPieces) {
+    d.group.position.copy(d.body.position);
+    d.group.quaternion.copy(d.body.quaternion);
+  }
 
   // ── Fell off edge ──
   const floorEdge = 20;
@@ -1856,6 +2025,15 @@ function updatePhysics(dt) {
       return;
     }
     return;
+  }
+
+  // Clean up debris that fell too far
+  for (let i = debrisPieces.length - 1; i >= 0; i--) {
+    if (debrisPieces[i].body.position.y < -20) {
+      scene.remove(debrisPieces[i].group);
+      world.removeBody(debrisPieces[i].body);
+      debrisPieces.splice(i, 1);
+    }
   }
 
   // ── Win check ──
@@ -1886,9 +2064,15 @@ function animateEndZone(time) {
   }
 }
 
-// ── Camera follows structure ──
+// ── Camera follows selected cube or structure center ──
 function updateCamera() {
-  controls.target.lerp(structureGroup.position, 0.05);
+  let target;
+  if (selectedCube) {
+    target = cubeWorldPos(selectedCube);
+  } else {
+    target = structureGroup.position.clone();
+  }
+  controls.target.lerp(target, 0.06);
 }
 
 // ── Main loop ──

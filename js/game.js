@@ -36,7 +36,8 @@ controls.dampingFactor = 0.08;
 controls.maxPolarAngle = Math.PI / 2 - 0.05;
 controls.minDistance = 4;
 controls.maxDistance = 30;
-controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
+controls.enablePan = false;
+controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.ROTATE };
 
 // ── Lights ──
 const ambient = new THREE.AmbientLight(0xffffff, 0.5);
@@ -85,6 +86,8 @@ createFloor();
 // ── Raycaster ──
 const raycaster = new THREE.Raycaster();
 const mouse = new THREE.Vector2();
+const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+const lastMouseWorld = new THREE.Vector3(); // mouse position on ground plane
 
 // ── Game state ──
 let selectedCube = null;
@@ -98,9 +101,11 @@ const words = [];       // { text, dir, isVerb, arrowHelper }
 const velocity = new THREE.Vector3();
 const FRICTION = 0.97;
 const VERB_FORCE = 2.5;
+const VERB_DELAY = 3; // seconds before verb activates
 
 let endZone = null;
 let endZoneBox = null;
+let directionArrow = null; // blue arrow showing word placement direction
 
 // ── Animation queue ──
 const animations = [];  // { mesh, startTime, duration }
@@ -173,7 +178,12 @@ function placeWord(text, startGx, startGz, dir, wordIdx, animated = false) {
     newBlockIndex++;
   }
 
-  const wordEntry = { text, dir, isVerb: verb, length: text.length, arrowHelper: null };
+  const wordEntry = {
+    text, dir, isVerb: verb, length: text.length, arrowHelper: null,
+    active: !verb, // non-verbs are always "active" (they don't apply force anyway)
+    activateAt: verb ? performance.now() / 1000 + VERB_DELAY : 0,
+    timerSprite: null,
+  };
 
   // Verb force arrow (delayed until animation finishes if animated)
   if (verb) {
@@ -182,18 +192,8 @@ function placeWord(text, startGx, startGz, dir, wordIdx, animated = false) {
     const midCube = placed[midIdx];
     const origin = new THREE.Vector3(midCube.gx, 1.2, midCube.gz);
     const arrow = new THREE.ArrowHelper(arrowDir, origin, 1.5, 0xff2222, 0.4, 0.25);
-    if (animated) {
-      // Hide arrow until last block finishes animating
-      arrow.visible = false;
-      const revealTime = now + newBlockIndex * BLOCK_ANIM_STAGGER + BLOCK_ANIM_DURATION;
-      animations.push({
-        arrow,
-        revealTime,
-        isArrowReveal: true,
-        verbSound: true,
-        soundPlayed: false,
-      });
-    }
+    // Hide arrow until verb timer activates it
+    arrow.visible = false;
     structureGroup.add(arrow);
     wordEntry.arrowHelper = arrow;
     verbLegend.classList.remove('hidden');
@@ -257,9 +257,18 @@ function dirToVec(dir) {
   }
 }
 
-function oppositeAxis(dir) {
-  if (dir.startsWith('x')) return Math.random() < 0.5 ? 'z+' : 'z-';
-  return Math.random() < 0.5 ? 'x+' : 'x-';
+// ── Get cardinal direction from selected cube toward mouse on ground ──
+function dirFromMouse(cubeGx, cubeGz) {
+  // Get cube world position (account for structure movement)
+  const wx = cubeGx + structureGroup.position.x;
+  const wz = cubeGz + structureGroup.position.z;
+  const dx = lastMouseWorld.x - wx;
+  const dz = lastMouseWorld.z - wz;
+  // Pick the dominant axis
+  if (Math.abs(dx) >= Math.abs(dz)) {
+    return dx >= 0 ? 'x+' : 'x-';
+  }
+  return dz >= 0 ? 'z+' : 'z-';
 }
 
 // ── End zone ──
@@ -310,6 +319,113 @@ function clearHighlight() {
   }
 }
 
+// ── Verb countdown timer sprite ──
+function createTimerSprite() {
+  const canvas = document.createElement('canvas');
+  canvas.width = 128;
+  canvas.height = 128;
+  const tex = new THREE.CanvasTexture(canvas);
+  const mat = new THREE.SpriteMaterial({ map: tex, transparent: true });
+  const sprite = new THREE.Sprite(mat);
+  sprite.scale.set(1, 1, 1);
+  sprite.userData.canvas = canvas;
+  sprite.userData.texture = tex;
+  return sprite;
+}
+
+function updateTimerSprite(sprite, remaining, total) {
+  const canvas = sprite.userData.canvas;
+  const ctx = canvas.getContext('2d');
+  const cx = 64, cy = 64, r = 50;
+  ctx.clearRect(0, 0, 128, 128);
+
+  // Background circle
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(0,0,0,0.5)';
+  ctx.fill();
+
+  // Progress arc (fills up as timer counts down)
+  const progress = 1 - remaining / total;
+  ctx.beginPath();
+  ctx.moveTo(cx, cy);
+  ctx.arc(cx, cy, r - 2, -Math.PI / 2, -Math.PI / 2 + progress * Math.PI * 2);
+  ctx.closePath();
+  ctx.fillStyle = remaining > 1 ? '#ff4444' : '#ff8844';
+  ctx.fill();
+
+  // Center text
+  const sec = Math.ceil(remaining);
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 40px Arial';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(sec > 0 ? String(sec) : '!', cx, cy);
+
+  sprite.userData.texture.needsUpdate = true;
+}
+
+function updateVerbTimers() {
+  const now = performance.now() / 1000;
+  for (const w of words) {
+    if (!w.isVerb || w.active) continue;
+    const remaining = w.activateAt - now;
+
+    if (remaining <= 0) {
+      // Activate!
+      w.active = true;
+      if (w.timerSprite) {
+        structureGroup.remove(w.timerSprite);
+        w.timerSprite = null;
+      }
+      if (w.arrowHelper) w.arrowHelper.visible = true;
+      audio.verb();
+      showMessage(`"${w.text}" activated!`, '#44ff44');
+    } else {
+      // Create or update timer sprite
+      if (!w.timerSprite) {
+        w.timerSprite = createTimerSprite();
+        structureGroup.add(w.timerSprite);
+      }
+      // Position above the middle of the word
+      const dv = dirToVec(w.dir);
+      const midIdx = Math.floor(w.length / 2);
+      const midGx = (w.arrowHelper ? w.arrowHelper.position.x : 0);
+      const midGz = (w.arrowHelper ? w.arrowHelper.position.z : 0);
+      w.timerSprite.position.set(midGx, 2.2, midGz);
+      updateTimerSprite(w.timerSprite, remaining, VERB_DELAY);
+    }
+  }
+}
+
+// ── Direction indicator arrow ──
+function updateDirectionArrow() {
+  if (!selectedCube) {
+    removeDirectionArrow();
+    return;
+  }
+  const dir = dirFromMouse(selectedCube.gx, selectedCube.gz);
+  const dv = dirToVec(dir);
+  const arrowDir = new THREE.Vector3(dv.x, 0, dv.z);
+  const origin = new THREE.Vector3(selectedCube.gx, 1.3, selectedCube.gz);
+
+  if (directionArrow) {
+    directionArrow.position.copy(origin);
+    directionArrow.setDirection(arrowDir);
+  } else {
+    directionArrow = new THREE.ArrowHelper(arrowDir, origin, 2, 0x4488ff, 0.35, 0.2);
+    structureGroup.add(directionArrow);
+  }
+}
+
+function removeDirectionArrow() {
+  if (directionArrow) {
+    structureGroup.remove(directionArrow);
+    directionArrow.dispose();
+    directionArrow = null;
+  }
+}
+
 // ── Message flash ──
 let msgTimeout = null;
 function showMessage(text, color = '#ff6b6b') {
@@ -329,6 +445,7 @@ function startLevel() {
   }
   cubes.length = 0;
   words.length = 0;
+  animations.length = 0;
   velocity.set(0, 0, 0);
   structureGroup.position.set(0, 0, 0);
   selectedCube = null;
@@ -360,7 +477,7 @@ function startLevel() {
   camera.position.set(6, 8, 10);
 
   levelInfoEl.textContent = 'Level 1';
-  hintEl.textContent = 'Click a letter cube, then type a word containing that letter';
+  hintEl.textContent = 'Build words with VERBS to push your structure into the red zone! Click a cube, type a word, mouse aims the direction.';
 }
 
 // ── Click handling ──
@@ -377,6 +494,12 @@ canvas.addEventListener('pointermove', (e) => {
   const dx = e.clientX - mouseDownPos.x;
   const dy = e.clientY - mouseDownPos.y;
   if (Math.sqrt(dx * dx + dy * dy) > 5) isDrag = true;
+
+  // Track mouse on ground plane
+  mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+  mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+  raycaster.setFromCamera(mouse, camera);
+  raycaster.ray.intersectPlane(groundPlane, lastMouseWorld);
 });
 
 canvas.addEventListener('pointerup', (e) => {
@@ -401,6 +524,7 @@ canvas.addEventListener('pointerup', (e) => {
   } else {
     selectedCube = null;
     clearHighlight();
+    removeDirectionArrow();
     selectedInfoEl.textContent = '';
     inputContainer.classList.add('hidden');
   }
@@ -429,9 +553,8 @@ function submitWord() {
     return;
   }
 
-  // Find which word the selected cube belongs to, determine perpendicular direction
-  const parentWord = words[selectedCube.wordIdx];
-  const dir = parentWord ? oppositeAxis(parentWord.dir) : (Math.random() < 0.5 ? 'z+' : 'z-');
+  // Direction based on mouse position relative to selected cube
+  const dir = dirFromMouse(selectedCube.gx, selectedCube.gz);
   const dv = dirToVec(dir);
 
   // Calculate starting position so that text[idx] aligns with selectedCube
@@ -462,6 +585,7 @@ function submitWord() {
   // Deselect
   selectedCube = null;
   clearHighlight();
+  removeDirectionArrow();
   selectedInfoEl.textContent = '';
   inputContainer.classList.add('hidden');
   wordInput.value = '';
@@ -484,9 +608,9 @@ window.addEventListener('keydown', (e) => {
 function updatePhysics(dt) {
   if (levelComplete) return;
 
-  // Apply verb forces
+  // Apply verb forces (only active verbs)
   for (const w of words) {
-    if (!w.isVerb) continue;
+    if (!w.isVerb || !w.active) continue;
     const dv = dirToVec(w.dir);
     const force = VERB_FORCE * w.length;
     velocity.x += dv.x * force * dt;
@@ -501,17 +625,29 @@ function updatePhysics(dt) {
   structureGroup.position.x += velocity.x * dt;
   structureGroup.position.z += velocity.z * dt;
 
-  // Keep on floor bounds
-  const bound = 18;
-  if (Math.abs(structureGroup.position.x) > bound) {
-    structureGroup.position.x = Math.sign(structureGroup.position.x) * bound;
-    velocity.x *= -0.5;
-    audio.collision();
+  // Check if structure has fallen off the platform edge
+  const floorEdge = 20;
+  const sp = structureGroup.position;
+  let onPlatform = false;
+  for (const c of cubes) {
+    const wx = Math.abs(c.mesh.position.x + sp.x);
+    const wz = Math.abs(c.mesh.position.z + sp.z);
+    if (wx < floorEdge && wz < floorEdge) {
+      onPlatform = true;
+      break;
+    }
   }
-  if (Math.abs(structureGroup.position.z) > bound) {
-    structureGroup.position.z = Math.sign(structureGroup.position.z) * bound;
-    velocity.z *= -0.5;
-    audio.collision();
+  if (!onPlatform && cubes.length > 0) {
+    // Structure is entirely off the platform - fall and restart
+    structureGroup.position.y -= 5 * dt;
+    if (structureGroup.position.y < -5) {
+      audio.collision();
+      showMessage('Fell off! Restarting...', '#ff6b6b');
+      setTimeout(() => startLevel(), 1000);
+      levelComplete = true; // stop physics
+      return;
+    }
+    return; // skip win check while falling
   }
 
   // Check win - any cube in end zone?
@@ -552,6 +688,8 @@ function animate() {
   const time = clock.elapsedTime;
 
   updateAnimations();
+  updateVerbTimers();
+  updateDirectionArrow();
   updatePhysics(dt);
   updateCamera();
   animateEndZone(time);

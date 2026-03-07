@@ -20,6 +20,7 @@
     <div id="top-bar">
       <div id="level-info">Level 1</div>
       <button id="restart-btn">Restart</button>
+      <button id="settings-btn">&#9881;</button>
     </div>
     <div id="hint">Click a letter cube, then type a word containing that letter</div>
     <div id="selected-info"></div>
@@ -34,11 +35,48 @@
   </div>
   <div id="level-complete" class="hidden">
     <h1>Level Complete!</h1>
-    <p>Press ENTER to continue</p>
+    <p>Click anywhere to continue</p>
   </div>
   <div id="type-spinner" class="hidden">
     <div id="spinner-word"></div>
     <div id="spinner-type"></div>
+  </div>
+  <div id="settings-screen" class="hidden">
+    <div id="settings-inner">
+      <h2>SETTINGS</h2>
+      <div class="settings-section">
+        <h3>Graphics</h3>
+        <div class="setting-row">
+          <span>Resolution</span>
+          <div class="setting-options" data-setting="resolution">
+            <button data-value="0.5">Low</button>
+            <button data-value="1">Medium</button>
+            <button data-value="native">High</button>
+          </div>
+        </div>
+        <div class="setting-row">
+          <span>Shadows</span>
+          <label class="toggle"><input type="checkbox" id="setting-shadows"><span class="toggle-slider"></span></label>
+        </div>
+        <div class="setting-row">
+          <span>Fog</span>
+          <label class="toggle"><input type="checkbox" id="setting-fog"><span class="toggle-slider"></span></label>
+        </div>
+        <div class="setting-row">
+          <span>Cinematic Tone</span>
+          <label class="toggle"><input type="checkbox" id="setting-tonemapping"><span class="toggle-slider"></span></label>
+        </div>
+        <div class="setting-row">
+          <span>Pixelate</span>
+          <div class="setting-options" data-setting="pixelate">
+            <button data-value="0">Off</button>
+            <button data-value="4">Low</button>
+            <button data-value="8">High</button>
+          </div>
+        </div>
+      </div>
+      <button id="settings-close">CLOSE</button>
+    </div>
   </div>
   <div id="pause-screen" class="hidden">
     <h1>PAUSED</h1>

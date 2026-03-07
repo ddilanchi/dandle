@@ -75,6 +75,68 @@ export class AudioManager {
     n.start(t);
   }
 
+  rocketThrust(duration) {
+    this.ensure();
+    const t = this.ctx.currentTime;
+
+    // Sustained engine rumble
+    const buf = this.ctx.createBuffer(1, Math.ceil(this.ctx.sampleRate * (duration + 0.2)), this.ctx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+    const noise = this.ctx.createBufferSource();
+    noise.buffer = buf;
+
+    const filt = this.ctx.createBiquadFilter();
+    filt.type = 'bandpass';
+    filt.frequency.setValueAtTime(80, t);
+    filt.frequency.exponentialRampToValueAtTime(300, t + 0.15);
+    filt.frequency.setValueAtTime(180, t + 0.15);
+    filt.Q.value = 6;
+
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.001, t);
+    g.gain.exponentialRampToValueAtTime(0.5, t + 0.15);
+    g.gain.setValueAtTime(0.45, t + duration - 0.3);
+    g.gain.exponentialRampToValueAtTime(0.001, t + duration);
+    noise.connect(filt).connect(g).connect(this.ctx.destination);
+    noise.start(t);
+    noise.stop(t + duration + 0.05);
+
+    // Ignition pop
+    const o = this.ctx.createOscillator();
+    const og = this.ctx.createGain();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(120, t);
+    o.frequency.exponentialRampToValueAtTime(40, t + 0.3);
+    og.gain.setValueAtTime(0.4, t);
+    og.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+    o.connect(og).connect(this.ctx.destination);
+    o.start(t); o.stop(t + 0.3);
+
+    // Countdown beeps — one per second of thrust
+    for (let i = 1; i < duration; i++) {
+      const bo = this.ctx.createOscillator();
+      const bg = this.ctx.createGain();
+      bo.type = 'sine';
+      bo.frequency.value = 1200 - i * 80;
+      bg.gain.setValueAtTime(0.12, t + i);
+      bg.gain.exponentialRampToValueAtTime(0.001, t + i + 0.08);
+      bo.connect(bg).connect(this.ctx.destination);
+      bo.start(t + i); bo.stop(t + i + 0.1);
+    }
+
+    // Cutoff thud
+    const co = this.ctx.createOscillator();
+    const cg = this.ctx.createGain();
+    co.type = 'sine';
+    co.frequency.setValueAtTime(200, t + duration);
+    co.frequency.exponentialRampToValueAtTime(40, t + duration + 0.25);
+    cg.gain.setValueAtTime(0.3, t + duration);
+    cg.gain.exponentialRampToValueAtTime(0.001, t + duration + 0.25);
+    co.connect(cg).connect(this.ctx.destination);
+    co.start(t + duration); co.stop(t + duration + 0.3);
+  }
+
   verb() {
     this.ensure();
     const t = this.ctx.currentTime;
@@ -204,24 +266,25 @@ export class AudioManager {
   }
 
   // ── Background music ──
-  // Procedural jazz/blues that reacts to cube count
+  // Walking bass + right-hand jazz melody
 
-  // Blues scale intervals (semitones from root): root, b3, 4, b5, 5, b7
-  static BLUES_INTERVALS = [0, 3, 5, 6, 7, 10];
-  // Root notes per level (Hz) — different keys
+  // Major scale intervals (semitones): root, 2, 3, 5, 7, 9, 11
+  static MAJOR_INTERVALS = [0, 2, 4, 5, 7, 9, 11, 12];
+  // Root notes per level (Hz)
   static LEVEL_ROOTS = [
-    130.81, // C3 - Level 1
-    155.56, // Eb3 - Level 2
-    174.61, // F3 - Level 3
-    196.00, // G3 - Level 4
-    116.54, // Bb2 - Level 5
-    146.83, // D3 - fallback
+    261.63, // C4 - Level 1
+    293.66, // D4 - Level 2
+    329.63, // E4 - Level 3
+    349.23, // F4 - Level 4
+    392.00, // G4 - Level 5
+    261.63, // fallback
   ];
 
   _buildScale(rootHz) {
+    // Two octaves of the scale, from bass to treble
     const scale = [];
-    for (let oct = 0; oct < 2; oct++) {
-      for (const interval of AudioManager.BLUES_INTERVALS) {
+    for (let oct = -2; oct < 2; oct++) {
+      for (const interval of AudioManager.MAJOR_INTERVALS) {
         scale.push(rootHz * Math.pow(2, (interval + oct * 12) / 12));
       }
     }
@@ -235,16 +298,17 @@ export class AudioManager {
     const rootIdx = Math.min(level - 1, AudioManager.LEVEL_ROOTS.length - 1);
     const root = AudioManager.LEVEL_ROOTS[Math.max(0, rootIdx)];
     this._scale = this._buildScale(root);
-    this._bassRoot = root;
+    this._rootHz = root;
     this._musicPlaying = true;
-    this._baseTempo = 0.45;
+    this._beatDur = 0.22; // quarter note duration (fast walking)
     this._cubeCount = 5;
-    this._nextBeat = this.ctx.currentTime + 0.1;
+    this._nextBeat = this.ctx.currentTime + 0.05;
     this._beatIndex = 0;
-    this._lastMelodyNote = 3;
+    this._melodyNote = 16; // start in upper half of scale
+    this._bassStep = 0;    // walking bass position in scale
 
     this._musicGain = this.ctx.createGain();
-    this._musicGain.gain.value = 0.08;
+    this._musicGain.gain.value = 0.07;
     this._musicGain.connect(this.ctx.destination);
 
     this._scheduleLoop();
@@ -254,73 +318,121 @@ export class AudioManager {
     this._musicPlaying = false;
     if (this._musicTimer) { clearTimeout(this._musicTimer); this._musicTimer = null; }
     if (this._musicGain) {
-      try { this._musicGain.gain.linearRampToValueAtTime(0, (this.ctx?.currentTime || 0) + 0.5); } catch (e) {}
+      try { this._musicGain.gain.linearRampToValueAtTime(0, (this.ctx?.currentTime || 0) + 0.4); } catch (e) {}
     }
   }
 
   setMusicIntensity(cubeCount) { this._cubeCount = cubeCount; }
 
-  _getTempo() {
-    const speedup = Math.min(this._cubeCount / 40, 0.3);
-    return this._baseTempo * (1 - speedup);
+  _getBeatDur() {
+    // Slightly faster as cubes accumulate
+    const speedup = Math.min(this._cubeCount / 50, 0.25);
+    return this._beatDur * (1 - speedup);
   }
 
   _scheduleLoop() {
     if (!this._musicPlaying) return;
     const now = this.ctx.currentTime;
-    const lookahead = 0.2;
+    const lookahead = 0.25;
     while (this._nextBeat < now + lookahead) {
       this._playBeat(this._nextBeat, this._beatIndex);
-      this._nextBeat += this._getTempo();
+      this._nextBeat += this._getBeatDur();
       this._beatIndex++;
     }
-    this._musicTimer = setTimeout(() => this._scheduleLoop(), 100);
+    this._musicTimer = setTimeout(() => this._scheduleLoop(), 80);
   }
 
   _playBeat(time, beat) {
-    const bar = beat % 8;
-    this._playBass(time, bar);
-    if (bar === 0 || bar === 2 || bar === 4 || bar === 6) {
-      if (Math.random() > 0.2) this._playMelody(time);
-    }
-    if ((bar === 3 || bar === 5) && Math.random() > 0.5) this._playMelody(time);
+    // Walking bass on every beat (scale steps up/down)
+    this._playWalkingBass(time, beat);
+    // Melody on beats 1 and 3 of each bar (every 4 beats), with some off-beat fills
+    const pos = beat % 4;
+    if (pos === 0) this._playMelody(time, 'chord');
+    else if (pos === 2) this._playMelody(time, 'run');
+    else if (Math.random() > 0.65) this._playMelody(time, 'fill');
   }
 
-  _playBass(time, bar) {
-    const bassNotes = [0, 0, 4, 3, 2, 2, 4, 3];
-    const freq = this._scale[bassNotes[bar]] * 0.5;
+  _playWalkingBass(time, beat) {
+    // Walk up/down the lower octave of the scale
+    // Pattern: root → 3rd → 5th → leading tone, then repeat up/down
+    const bar = Math.floor(beat / 4) % 4;
+    const pos = beat % 4;
+    // Walking patterns: up on even bars, down on odd bars
+    const walkUp   = [0, 2, 4, 6]; // scale degrees (index into scale, bass octave)
+    const walkDown = [7, 5, 3, 1];
+    const bassOct = 8; // index offset into scale for bass register (oct -1)
+    const idx = bassOct + (bar % 2 === 0 ? walkUp[pos] : walkDown[pos]);
+    const freq = this._scale[Math.max(0, Math.min(this._scale.length - 1, idx))];
+
+    const dur = this._getBeatDur() * 0.85;
     const o = this.ctx.createOscillator();
     const g = this.ctx.createGain();
     o.type = 'triangle';
     o.frequency.value = freq;
-    const dur = this._getTempo() * 0.8;
-    g.gain.setValueAtTime(0.6, time);
+    g.gain.setValueAtTime(0.7, time);
     g.gain.exponentialRampToValueAtTime(0.01, time + dur);
     o.connect(g).connect(this._musicGain);
     o.start(time); o.stop(time + dur);
   }
 
-  _playMelody(time) {
-    const step = Math.floor(Math.random() * 3) - 1;
-    this._lastMelodyNote = Math.max(2, Math.min(this._scale.length - 1, this._lastMelodyNote + step));
-    if (Math.random() > 0.85) {
-      this._lastMelodyNote = 2 + Math.floor(Math.random() * (this._scale.length - 3));
+  _playMelody(time, type) {
+    const scaleLen = this._scale.length;
+    const midPoint = Math.floor(scaleLen * 0.6); // upper half of scale
+
+    if (type === 'chord') {
+      // Play a two-note chord (root + third or fifth)
+      const base = midPoint + Math.floor(Math.random() * 4);
+      const third = Math.min(scaleLen - 1, base + 2);
+      const dur = this._getBeatDur() * 1.8;
+      [base, third].forEach(idx => {
+        const freq = this._scale[Math.max(0, Math.min(scaleLen - 1, idx))];
+        const o = this.ctx.createOscillator();
+        const g = this.ctx.createGain();
+        o.type = 'sine';
+        o.frequency.value = freq;
+        g.gain.setValueAtTime(0.001, time);
+        g.gain.linearRampToValueAtTime(0.35, time + 0.015);
+        g.gain.exponentialRampToValueAtTime(0.001, time + dur);
+        o.connect(g).connect(this._musicGain);
+        o.start(time); o.stop(time + dur);
+      });
+    } else if (type === 'run') {
+      // Short scale run of 3–4 notes
+      const dir = Math.random() > 0.5 ? 1 : -1;
+      const runLen = 3 + Math.floor(Math.random() * 2);
+      let note = this._melodyNote;
+      const bd = this._getBeatDur();
+      for (let i = 0; i < runLen; i++) {
+        note = Math.max(midPoint - 2, Math.min(scaleLen - 1, note + dir));
+        const freq = this._scale[note];
+        const noteTime = time + i * (bd / runLen);
+        const dur = (bd / runLen) * 0.8;
+        const o = this.ctx.createOscillator();
+        const g = this.ctx.createGain();
+        o.type = 'sine';
+        o.frequency.value = freq;
+        g.gain.setValueAtTime(0.001, noteTime);
+        g.gain.linearRampToValueAtTime(0.25, noteTime + 0.01);
+        g.gain.exponentialRampToValueAtTime(0.001, noteTime + dur);
+        o.connect(g).connect(this._musicGain);
+        o.start(noteTime); o.stop(noteTime + dur);
+      }
+      this._melodyNote = note;
+    } else {
+      // Fill: single syncopated note
+      const step = (Math.random() > 0.5 ? 1 : -1) * (1 + Math.floor(Math.random() * 2));
+      this._melodyNote = Math.max(midPoint - 2, Math.min(scaleLen - 1, this._melodyNote + step));
+      const freq = this._scale[this._melodyNote];
+      const dur = this._getBeatDur() * 0.6;
+      const o = this.ctx.createOscillator();
+      const g = this.ctx.createGain();
+      o.type = 'sine';
+      o.frequency.value = freq;
+      g.gain.setValueAtTime(0.001, time);
+      g.gain.linearRampToValueAtTime(0.2, time + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.001, time + dur);
+      o.connect(g).connect(this._musicGain);
+      o.start(time); o.stop(time + dur);
     }
-    const freq = this._scale[this._lastMelodyNote];
-    const dur = this._getTempo() * (0.5 + Math.random() * 0.4);
-    const o1 = this.ctx.createOscillator();
-    const o2 = this.ctx.createOscillator();
-    const g = this.ctx.createGain();
-    const g2 = this.ctx.createGain();
-    o1.type = 'sine'; o1.frequency.value = freq;
-    o2.type = 'sine'; o2.frequency.value = freq * 2;
-    g2.gain.value = 0.15;
-    g.gain.setValueAtTime(0.01, time);
-    g.gain.linearRampToValueAtTime(0.5, time + 0.02);
-    g.gain.exponentialRampToValueAtTime(0.01, time + dur);
-    o1.connect(g).connect(this._musicGain);
-    o2.connect(g2).connect(g);
-    o1.start(time); o2.start(time);
-    o1.stop(time + dur); o2.stop(time + dur);
   }
 }

@@ -4,7 +4,7 @@ import * as CANNON from 'cannon-es';
 import { getRandomWord, isVerb, getWordTypes, isValidWord, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v1.0.5';
+const VERSION = 'v1.0.7';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -31,6 +31,15 @@ const spinnerWord = document.getElementById('spinner-word');
 const spinnerType = document.getElementById('spinner-type');
 let gameStarted = false;
 let paused = false;
+
+// ── Settings ──
+const DEFAULT_SETTINGS = { resolution: '1', shadows: true, fog: true, tonemapping: true, pixelate: 0 };
+function loadSettings() {
+  try { return { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem('dandle_settings') || '{}') }; }
+  catch { return { ...DEFAULT_SETTINGS }; }
+}
+function saveSettings(s) { localStorage.setItem('dandle_settings', JSON.stringify(s)); }
+let currentSettings = loadSettings();
 
 const TOTAL_LEVELS = 5;
 
@@ -109,6 +118,43 @@ sun.shadow.camera.top = 20;
 sun.shadow.camera.bottom = -20;
 scene.add(sun);
 
+// ── Pixelation blit pass ──
+const _blitCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+const _blitScene = new THREE.Scene();
+const _blitGeo = new THREE.PlaneGeometry(2, 2);
+const _blitMat = new THREE.MeshBasicMaterial();
+_blitScene.add(new THREE.Mesh(_blitGeo, _blitMat));
+let _pixelRT = null;
+
+function _getPixelDivisor(s) {
+  // 0 = off, 4 = low, 8 = high
+  return s.pixelate || 0;
+}
+
+function _ensurePixelRT(divisor) {
+  const w = Math.max(1, Math.floor(window.innerWidth / divisor));
+  const h = Math.max(1, Math.floor(window.innerHeight / divisor));
+  if (!_pixelRT || _pixelRT.width !== w || _pixelRT.height !== h) {
+    if (_pixelRT) _pixelRT.dispose();
+    _pixelRT = new THREE.WebGLRenderTarget(w, h, {
+      minFilter: THREE.NearestFilter,
+      magFilter: THREE.NearestFilter,
+    });
+  }
+  return _pixelRT;
+}
+
+function applySettings(s) {
+  const dpr = s.resolution === 'native' ? window.devicePixelRatio : parseFloat(s.resolution);
+  renderer.setPixelRatio(Math.min(dpr, window.devicePixelRatio));
+  renderer.shadowMap.enabled = s.shadows;
+  sun.castShadow = s.shadows;
+  scene.fog = s.fog ? new THREE.Fog(0x87ceeb, 30, 60) : null;
+  renderer.toneMapping = s.tonemapping ? THREE.ACESFilmicToneMapping : THREE.NoToneMapping;
+  if (!s.pixelate && _pixelRT) { _pixelRT.dispose(); _pixelRT = null; }
+}
+applySettings(currentSettings);
+
 // ── Audio ──
 const audio = new AudioManager();
 
@@ -117,11 +163,11 @@ function createFloor() {
   const size = 40;
   const geo = new THREE.PlaneGeometry(size, size);
   const c = document.createElement('canvas');
-  c.width = 512;
-  c.height = 512;
+  c.width = 2048;
+  c.height = 2048;
   const ctx = c.getContext('2d');
   const tiles = 40;
-  const tileSize = 512 / tiles;
+  const tileSize = 2048 / tiles;
   const green = '#4a7c59';
   const beige = '#d4c5a0';
   for (let y = 0; y < tiles; y++) {
@@ -131,7 +177,7 @@ function createFloor() {
     }
   }
   const tex = new THREE.CanvasTexture(c);
-  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
   const mat = new THREE.MeshStandardMaterial({ map: tex });
   const mesh = new THREE.Mesh(geo, mat);
   mesh.rotation.x = -Math.PI / 2;
@@ -327,8 +373,9 @@ function placeWord(text, startGx, startGz, dir, wordIdx, animated = false, start
 
   const wordEntry = {
     text, dir, isVerb: verb, length: text.length, arrowHelper: null,
-    active: !verb, // non-verbs are always "active" (they don't apply force anyway)
+    active: !verb,
     activateAt: verb ? performance.now() / 1000 + VERB_DELAY : 0,
+    thrustActive: false, thrustStart: 0, thrustDuration: 0,
     timerSprite: null,
   };
 
@@ -421,9 +468,11 @@ function dirToVec(dir) {
 
 // ── Get 3D direction from selected cube toward mouse ──
 function dirFromMouse(cubeGx, cubeGy, cubeGz) {
-  const wx = cubeGx + structureGroup.position.x;
-  const wy = 0.5 + (cubeGy || 0) + structureGroup.position.y;
-  const wz = cubeGz + structureGroup.position.z;
+  // Use full group transform (position + rotation) to get actual world pos
+  const local = new THREE.Vector3(cubeGx, 0.5 + (cubeGy || 0), cubeGz);
+  local.applyQuaternion(structureGroup.quaternion);
+  local.add(structureGroup.position);
+  const wx = local.x, wy = local.y, wz = local.z;
 
   // Cast ray from mouse and find the closest point on the ray to the cube center
   raycaster.setFromCamera(mouse, camera);
@@ -730,21 +779,18 @@ function updateTimerSprite(sprite, remaining, total) {
 function updateVerbTimers() {
   const now = performance.now() / 1000;
   for (const w of words) {
-    if (!w.isVerb || w.active) continue;
-    const remaining = w.activateAt - now;
+    if (!w.isVerb || w._deleted) continue;
 
-    if (remaining <= 0) {
-      w.active = true;
-      if (w.timerSprite) { structureGroup.remove(w.timerSprite); w.timerSprite = null; }
-      if (w.arrowHelper) w.arrowHelper.visible = true;
-      audio.verb();
-      showMessage(`"${w.text}" activated!`, '#44ff44');
-
-      // Apply as impulse on activation — snappy kick
-      if (structureBody) {
+    // ── Rocket thrust phase (runs after activation) ──
+    if (w.thrustActive) {
+      const elapsed = now - w.thrustStart;
+      if (elapsed >= w.thrustDuration) {
+        w.thrustActive = false;
+        if (w.arrowHelper) w.arrowHelper.visible = false;
+      } else if (structureBody) {
         const dv = dirToVec(w.dir);
-        const mag = VERB_FORCE * w.length;
-        const impulse = new CANNON.Vec3(dv.x * mag, (dv.y || 0) * mag, dv.z * mag);
+        const thrust = VERB_FORCE * structureBody.mass;
+        const force = new CANNON.Vec3(dv.x * thrust, 0, dv.z * thrust);
         const wordCubes = cubes.filter(c => c.wordIdx === words.indexOf(w));
         if (wordCubes.length > 0) {
           const mid = wordCubes[Math.floor(wordCubes.length / 2)];
@@ -753,18 +799,34 @@ function updateVerbTimers() {
             0.5 + (mid.gy || 0) - _comLocal.y,
             mid.gz - _comLocal.z
           );
-          structureBody.applyLocalImpulse(impulse, localPt);
+          structureBody.applyLocalForce(force, localPt);
+          if (w.arrowHelper) {
+            const pulse = 1 + 0.3 * Math.sin(now * 20);
+            w.arrowHelper.scale.set(pulse, pulse, pulse);
+          }
         }
       }
+      continue;
+    }
+
+    if (w.active) continue;
+
+    // ── Countdown phase ──
+    const remaining = w.activateAt - now;
+    if (remaining <= 0) {
+      w.active = true;
+      if (w.timerSprite) { structureGroup.remove(w.timerSprite); w.timerSprite = null; }
+      if (w.arrowHelper) w.arrowHelper.visible = true;
+      w.thrustActive = true;
+      w.thrustStart = now;
+      w.thrustDuration = w.length;
+      audio.rocketThrust(w.thrustDuration);
+      showMessage(`"${w.text}" IGNITION — ${w.length}s thrust!`, '#ff8800');
     } else {
-      // Create or update timer sprite
       if (!w.timerSprite) {
         w.timerSprite = createTimerSprite();
         structureGroup.add(w.timerSprite);
       }
-      // Position above the middle of the word
-      const dv = dirToVec(w.dir);
-      const midIdx = Math.floor(w.length / 2);
       const midGx = (w.arrowHelper ? w.arrowHelper.position.x : 0);
       const midGz = (w.arrowHelper ? w.arrowHelper.position.z : 0);
       w.timerSprite.position.set(midGx, 2.2, midGz);
@@ -775,33 +837,25 @@ function updateVerbTimers() {
 
 // ── Direction indicator arrow ──
 function updateDirectionArrow() {
-  if (!selectedCube) {
-    removeDirectionArrow();
-    return;
-  }
+  if (!selectedCube) { removeDirectionArrow(); return; }
   const dir = dirFromMouse(selectedCube.gx, selectedCube.gy, selectedCube.gz);
   const dv = dirToVec(dir);
   const arrowDir = new THREE.Vector3(dv.x, dv.y || 0, dv.z).normalize();
-  // Origin from center of the selected block
-  const origin = new THREE.Vector3(
-    selectedCube.gx,
-    0.5 + (selectedCube.gy || 0),
-    selectedCube.gz
-  );
+  // Use actual world position of the selected cube (accounts for physics rotation)
+  const origin = cubeWorldPos(selectedCube);
 
   if (directionArrow) {
     directionArrow.position.copy(origin);
     directionArrow.setDirection(arrowDir);
   } else {
     directionArrow = new THREE.ArrowHelper(arrowDir, origin, 2, 0x4488ff, 0.35, 0.2);
-    structureGroup.add(directionArrow);
+    scene.add(directionArrow); // scene-level so position is in world space
   }
 }
 
 function removeDirectionArrow() {
   if (directionArrow) {
-    structureGroup.remove(directionArrow);
-    directionArrow.dispose();
+    scene.remove(directionArrow);
     directionArrow = null;
   }
 }
@@ -1243,12 +1297,75 @@ restartBtn.addEventListener('click', () => {
   showLevelSelect();
 });
 
-// ── Level complete & pause handler ──
-window.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && levelComplete && !levelFalling) {
+// ── Settings panel ──
+const settingsScreen = document.getElementById('settings-screen');
+const settingsBtn = document.getElementById('settings-btn');
+const settingsClose = document.getElementById('settings-close');
+
+function syncSettingsUI() {
+  document.getElementById('setting-shadows').checked = currentSettings.shadows;
+  document.getElementById('setting-fog').checked = currentSettings.fog;
+  document.getElementById('setting-tonemapping').checked = currentSettings.tonemapping;
+  settingsScreen.querySelectorAll('[data-setting="resolution"] button').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.value === String(currentSettings.resolution));
+  });
+  settingsScreen.querySelectorAll('[data-setting="pixelate"] button').forEach(btn => {
+    btn.classList.toggle('active', parseInt(btn.dataset.value) === (currentSettings.pixelate || 0));
+  });
+}
+
+settingsBtn.addEventListener('click', () => {
+  syncSettingsUI();
+  settingsScreen.classList.remove('hidden');
+});
+settingsClose.addEventListener('click', () => settingsScreen.classList.add('hidden'));
+
+settingsScreen.querySelectorAll('[data-setting="resolution"] button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    currentSettings.resolution = btn.dataset.value;
+    applySettings(currentSettings);
+    saveSettings(currentSettings);
+    syncSettingsUI();
+  });
+});
+
+settingsScreen.querySelectorAll('[data-setting="pixelate"] button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    currentSettings.pixelate = parseInt(btn.dataset.value);
+    applySettings(currentSettings);
+    saveSettings(currentSettings);
+    syncSettingsUI();
+  });
+});
+
+['shadows', 'fog', 'tonemapping'].forEach(key => {
+  document.getElementById(`setting-${key}`).addEventListener('change', (e) => {
+    currentSettings[key] = e.target.checked;
+    applySettings(currentSettings);
+    saveSettings(currentSettings);
+  });
+});
+
+// ── Level complete: click anywhere to advance ──
+levelCompleteEl.addEventListener('click', () => {
+  if (!levelFalling) {
     levelCompleteEl.classList.add('hidden');
     audio.stopMusic();
-    showLevelSelect();
+    if (currentLevel < TOTAL_LEVELS) {
+      currentLevel++;
+      startLevel();
+    } else {
+      currentLevel = 1;
+      startLevel();
+    }
+  }
+});
+
+// ── Pause handler ──
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !settingsScreen.classList.contains('hidden')) {
+    settingsScreen.classList.add('hidden');
+    return;
   }
   if (e.key === 'Escape' && gameStarted) {
     paused = !paused;
@@ -1342,8 +1459,8 @@ function updatePhysics(dt) {
         levelCompleteEl.querySelector('h1').textContent = 'Level Complete!';
         const isLast = currentLevel >= TOTAL_LEVELS;
         levelCompleteEl.querySelector('p').textContent = isLast
-          ? `All levels done! Letters used: ${lettersUsed}`
-          : `Letters used: ${lettersUsed} | Press ENTER to continue`;
+          ? `All ${TOTAL_LEVELS} levels done! Letters used: ${lettersUsed}`
+          : `Letters used: ${lettersUsed} — click anywhere to continue`;
         levelCompleteEl.classList.remove('hidden');
         audio.levelComplete();
         return;
@@ -1385,7 +1502,17 @@ function animate() {
     animateEndZone(time);
   }
   controls.update();
-  renderer.render(scene, camera);
+  const _pixDiv = _getPixelDivisor(currentSettings);
+  if (_pixDiv > 0) {
+    const rt = _ensurePixelRT(_pixDiv);
+    renderer.setRenderTarget(rt);
+    renderer.render(scene, camera);
+    renderer.setRenderTarget(null);
+    _blitMat.map = rt.texture;
+    renderer.render(_blitScene, _blitCam);
+  } else {
+    renderer.render(scene, camera);
+  }
 }
 
 // ── Resize ──
@@ -1393,6 +1520,7 @@ window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
+  if (_pixelRT) { _pixelRT.dispose(); _pixelRT = null; }
 });
 
 // ── Intro screen loading progress ──
@@ -1436,7 +1564,8 @@ async function beginGame() {
   if (!isLoadDone()) return;
   gameStarted = true;
   introScreen.classList.add('hidden');
-  showLevelSelect();
+  currentLevel = 1;
+  startLevel();
 }
 
 introScreen.addEventListener('click', beginGame);

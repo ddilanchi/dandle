@@ -110,5 +110,7 @@ export const STARTER_WORDS = [
 ];
 
 export function getRandomWord() {
-  return STARTER_WORDS[Math.floor(Math.random() * STARTER_WORDS.length)];
+  const nonVerbs = STARTER_WORDS.filter(w => !VERBS.has(w));
+  const pool = nonVerbs.length > 0 ? nonVerbs : STARTER_WORDS;
+  return pool[Math.floor(Math.random() * pool.length)];
 }

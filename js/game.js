@@ -854,12 +854,17 @@ function startLevel() {
   // Starting word
   const word = getRandomWord();
   const startX = -Math.floor(word.length / 2);
-  console.warn('startLevel: placing word ' + word);
-  placeWord(word, startX, 0, 'x+', 0);
-  console.warn('startLevel: cubes.length=' + cubes.length);
+  console.warn('startLevel word=' + word + ' startX=' + startX);
+  try {
+    placeWord(word, startX, 0, 'x+', 0);
+    console.warn('placeWord ok | cubes=' + cubes.length + ' | groupChildren=' + structureGroup.children.length);
+  } catch(e) { console.error('placeWord failed: ' + e); }
   lettersUsed = word.length;
-  try { createStructureBody(); console.warn('createStructureBody ok'); }
-  catch(e) { console.error('createStructureBody failed: ' + e); }
+  try {
+    createStructureBody();
+    console.warn('cannon body ok | pos=' + JSON.stringify(structureBody?.position));
+  } catch(e) { console.error('createStructureBody failed: ' + e); }
+  console.warn('endZone=' + (endZone ? 'yes' : 'no') + ' | cubes=' + cubes.length);
 
   // Camera target
   controls.target.set(0, 0, 0);
@@ -921,6 +926,7 @@ function startLevel() {
 
   levelInfoEl.textContent = `Level ${currentLevel}`;
   hintEl.textContent = LEVEL_HINTS[currentLevel] || 'Reach the red zone!';
+  console.warn('startLevel done | level=' + currentLevel + ' | endZone=' + (endZone ? 'yes' : 'no') + ' | obstacles=' + levelObstacles.length);
 
   // Start music for this level
   audio.startMusic(currentLevel);
@@ -1433,5 +1439,5 @@ window.addEventListener('keydown', () => {
 });
 
 // ── Start ──
-console.warn('game.js loaded, CANNON=' + (typeof CANNON) + ' World=' + (typeof CANNON?.World));
+console.warn('game.js loaded ok | CANNON=' + (typeof CANNON) + ' | CANNON.World=' + (typeof CANNON?.World) + ' | CANNON.Body=' + (typeof CANNON?.Body));
 animate();

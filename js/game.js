@@ -4,7 +4,7 @@ import * as CANNON from 'cannon-es';
 import { getRandomWord, isVerb, getWordTypes, isValidWord, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v1.5.0';
+const VERSION = 'v1.5.1';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -985,7 +985,19 @@ function _removeArrowMask() {
   _maskedMeshes = [];
 }
 
-// ── Keyboard navigation (Shift+WASD / Shift+IJKL) ──
+// ── Keyboard navigation (Shift+WASD / Shift+Space) ──
+const ALL_DIRS = ['x+', 'x-', 'z+', 'z-', 'y+', 'y-'];
+
+function _getOpenFaces(cube) {
+  // Return directions where there's no adjacent cube
+  const gx = cube.gx, gy = cube.gy || 0, gz = cube.gz;
+  return ALL_DIRS.filter(dir => {
+    const dv = dirToVec(dir);
+    const nx = gx + dv.x, ny = gy + (dv.y || 0), nz = gz + dv.z;
+    return !cubes.some(c => c.gx === nx && (c.gy || 0) === ny && c.gz === nz);
+  });
+}
+
 function _handleNavKey(key) {
   if (!selectedCube) return false;
 
@@ -1007,10 +1019,12 @@ function _handleNavKey(key) {
     return true;
   }
 
-  // Shift+IJKL: change build direction
-  const dirMap = { 'I': 'z-', 'K': 'z+', 'J': 'x-', 'L': 'x+' };
-  if (dirMap[key]) {
-    currentDir = dirMap[key];
+  // Shift+Space: cycle through open faces
+  if (key === ' ') {
+    const openFaces = _getOpenFaces(selectedCube);
+    if (openFaces.length === 0) return true;
+    const curIdx = openFaces.indexOf(currentDir);
+    currentDir = openFaces[(curIdx + 1) % openFaces.length];
     audio.select();
     return true;
   }

@@ -300,7 +300,7 @@ export class AudioManager {
     this._scale = this._buildScale(root);
     this._rootHz = root;
     this._musicPlaying = true;
-    this._beatDur = 0.22; // quarter note duration (fast walking)
+    this._beatDur = 0.38; // quarter note duration
     this._cubeCount = 5;
     this._nextBeat = this.ctx.currentTime + 0.05;
     this._beatIndex = 0;

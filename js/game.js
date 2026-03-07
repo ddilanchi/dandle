@@ -17,11 +17,53 @@ const verbLegend = document.getElementById('verb-legend');
 const levelCompleteEl = document.getElementById('level-complete');
 const introScreen = document.getElementById('intro-screen');
 const pauseScreen = document.getElementById('pause-screen');
+const levelSelectEl = document.getElementById('level-select');
+const levelGridEl = document.getElementById('level-grid');
 const typeSpinner = document.getElementById('type-spinner');
 const spinnerWord = document.getElementById('spinner-word');
 const spinnerType = document.getElementById('spinner-type');
 let gameStarted = false;
 let paused = false;
+
+const TOTAL_LEVELS = 5;
+
+// Progression stored in localStorage
+function getUnlockedLevels() {
+  return parseInt(localStorage.getItem('dandle_unlocked') || '1', 10);
+}
+function unlockNextLevel(level) {
+  const current = getUnlockedLevels();
+  if (level >= current) {
+    localStorage.setItem('dandle_unlocked', String(Math.min(level + 1, TOTAL_LEVELS)));
+  }
+}
+
+function showLevelSelect() {
+  const unlocked = getUnlockedLevels();
+  levelGridEl.innerHTML = '';
+  for (let i = 1; i <= TOTAL_LEVELS; i++) {
+    const btn = document.createElement('button');
+    btn.className = 'level-btn';
+    const isLocked = i > unlocked;
+    const isCompleted = i < unlocked;
+    if (isLocked) btn.classList.add('locked');
+    else if (isCompleted) btn.classList.add('completed');
+    else btn.classList.add('unlocked');
+
+    if (isLocked) {
+      btn.innerHTML = `<span class="lock-icon">&#128274;</span><span class="level-label">Locked</span>`;
+    } else {
+      btn.innerHTML = `<span class="level-num">${i}</span><span class="level-label">${isCompleted ? '&#10003; Done' : 'Play'}</span>`;
+      btn.addEventListener('click', () => {
+        currentLevel = i;
+        levelSelectEl.classList.add('hidden');
+        startLevel();
+      });
+    }
+    levelGridEl.appendChild(btn);
+  }
+  levelSelectEl.classList.remove('hidden');
+}
 
 // ── Three.js setup ──
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -1126,14 +1168,16 @@ function updateExplosion(dt) {
 
 // ── Restart button ──
 restartBtn.addEventListener('click', () => {
-  startLevel();
+  audio.stopMusic();
+  showLevelSelect();
 });
 
 // ── Level complete & pause handler ──
 window.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && levelComplete && !levelFalling) {
-    currentLevel++;
-    startLevel();
+    levelCompleteEl.classList.add('hidden');
+    audio.stopMusic();
+    showLevelSelect();
   }
   if (e.key === 'Escape' && gameStarted) {
     paused = !paused;
@@ -1367,9 +1411,12 @@ function updatePhysics(dt) {
       const wp = cubeWorldPos(c);
       if (endZoneBox.containsPoint(wp)) {
         levelComplete = true;
+        unlockNextLevel(currentLevel);
         levelCompleteEl.querySelector('h1').textContent = 'Level Complete!';
-        levelCompleteEl.querySelector('p').textContent =
-          `Letters used: ${lettersUsed} | Press ENTER for Level ${currentLevel + 1}`;
+        const isLast = currentLevel >= TOTAL_LEVELS;
+        levelCompleteEl.querySelector('p').textContent = isLast
+          ? `All levels done! Letters used: ${lettersUsed}`
+          : `Letters used: ${lettersUsed} | Press ENTER to continue`;
         levelCompleteEl.classList.remove('hidden');
         audio.levelComplete();
         return;
@@ -1422,16 +1469,16 @@ window.addEventListener('resize', () => {
 });
 
 // ── Intro screen ──
-const startPromptEl = introScreen.querySelector('.start-prompt');
+const startPromptEl = document.getElementById('intro-start');
 
 async function beginGame() {
   if (gameStarted) return;
   gameStarted = true;
   startPromptEl.textContent = 'Loading...';
   await initWordNet();
-  introScreen.classList.add('hidden');
   audio.init();
-  startLevel();
+  introScreen.classList.add('hidden');
+  showLevelSelect();
 }
 
 introScreen.addEventListener('click', beginGame);

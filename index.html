@@ -43,15 +43,31 @@
     <h1>PAUSED</h1>
     <p>Press ESC to resume</p>
   </div>
+  <div id="level-select" class="hidden">
+    <h2>SELECT LEVEL</h2>
+    <div id="level-grid"></div>
+    <p id="level-select-hint">Complete levels to unlock more</p>
+  </div>
   <div id="intro-screen">
-    <h1>Dandle</h1>
-    <p class="subtitle">Wordcels and Shape-Rotators can work together!</p>
-    <div class="rules">
-      <p>Scrabble your way to the objective of each level</p>
-      <p>Use the laws of physics to your advantage</p>
-      <p class="verb-rule">Verbs want to <strong>MOVE</strong></p>
+    <div id="intro-inner">
+      <h1 id="intro-title">DANDLE</h1>
+      <p id="intro-sub">Wordcels &amp; Shape-Rotators can work together!</p>
+      <div id="intro-rules">
+        <div class="rule-item">
+          <span class="rule-icon">&#9650;</span>
+          <span>Scrabble your way to the objective</span>
+        </div>
+        <div class="rule-item">
+          <span class="rule-icon">&#9711;</span>
+          <span>Use the laws of physics to your advantage</span>
+        </div>
+        <div class="rule-item verb-highlight">
+          <span class="rule-icon">&#8594;</span>
+          <span>Verbs want to <strong>MOVE</strong></span>
+        </div>
+      </div>
+      <div id="intro-start">CLICK TO START</div>
     </div>
-    <p class="start-prompt">Click anywhere to start</p>
   </div>
   <div id="version">v0.9.0</div>
   <canvas id="game-canvas"></canvas>

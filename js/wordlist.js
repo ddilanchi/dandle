@@ -6,7 +6,7 @@ let _wordnet = null;
 
 async function loadWordNet() {
   if (_wordnet) return _wordnet;
-  const res = await fetch('./js/wordnet-data.json');
+  const res = await fetch('./wordnet-data.json');
   _wordnet = await res.json();
   return _wordnet;
 }

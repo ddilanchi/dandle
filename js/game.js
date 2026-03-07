@@ -4,7 +4,7 @@ import * as CANNON from 'cannon-es';
 import { getRandomWord, isVerb, getWordTypes, isValidWord, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v1.1.2';
+const VERSION = 'v1.1.3';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -161,29 +161,21 @@ const audio = new AudioManager();
 // ── Tiled cube floor ──
 let floorMesh = null;
 const FLOOR_HALF = 20; // floor extends -20..+20
-const TILE_H = 0.5;
+const TILE_H = 1;
 
-let _currentPits = [];
 let _carvedTiles = new Set(); // "gx,gz" keys for tiles removed by underground cubes
 
-function buildFloor(pits = []) {
-  _currentPits = pits;
+function buildFloor() {
   if (floorMesh) { scene.remove(floorMesh); floorMesh = null; }
 
   const green = new THREE.Color(0x6aad7a);
   const beige = new THREE.Color(0xece0c0);
 
-  // Collect tile positions, skipping pits and carved-out tiles
   const tilePositions = [];
   for (let xi = -FLOOR_HALF; xi < FLOOR_HALF; xi++) {
     for (let zi = -FLOOR_HALF; zi < FLOOR_HALF; zi++) {
-      const tx = xi + 0.5, tz = zi + 0.5;
       if (_carvedTiles.has(`${xi},${zi}`)) continue;
-      const inPit = pits.some(p =>
-        tx > p.x - p.w / 2 && tx < p.x + p.w / 2 &&
-        tz > p.z - p.d / 2 && tz < p.z + p.d / 2
-      );
-      if (!inPit) tilePositions.push({ tx, tz, xi, zi });
+      tilePositions.push({ tx: xi + 0.5, tz: zi + 0.5, xi, zi });
     }
   }
 
@@ -202,8 +194,8 @@ function buildFloor(pits = []) {
   if (floorMesh.instanceColor) floorMesh.instanceColor.needsUpdate = true;
   scene.add(floorMesh);
 
-  // Ensure ground plane is active
-  if (!_groundInWorld) { world.addBody(groundBody); _groundInWorld = true; }
+  // Ensure ground plane is in world
+  if (!world.bodies.includes(groundBody)) world.addBody(groundBody);
 }
 
 // Carve floor tiles where cubes are underground, then rebuild
@@ -220,7 +212,7 @@ function carveFloorForUndergroundCubes() {
       }
     }
   }
-  if (changed) buildFloor(_currentPits);
+  if (changed) buildFloor();
 }
 
 // ── Raycaster ──
@@ -260,7 +252,6 @@ const groundBody = new CANNON.Body({ mass: 0, material: groundMat });
 groundBody.addShape(new CANNON.Plane());
 groundBody.quaternion.setFromEuler(-Math.PI / 2, 0, 0);
 world.addBody(groundBody);
-let _groundInWorld = true;
 
 let structureBody = null;  // cannon rigid body for the whole structure
 let _comLocal = new THREE.Vector3(); // COM in structure local space
@@ -601,28 +592,6 @@ function addWall(x, z, w, h, d) {
   return wall;
 }
 
-function addPit(x, z, w, d) {
-  // Dark hole in the floor
-  const geo = new THREE.PlaneGeometry(w, d);
-  const mat = new THREE.MeshStandardMaterial({ color: 0x111118, side: THREE.DoubleSide });
-  const pit = new THREE.Mesh(geo, mat);
-  pit.rotation.x = -Math.PI / 2;
-  pit.position.set(x, 0.005, z);
-  scene.add(pit);
-  levelObstacles.push(pit);
-  pit.userData.isPit = true;
-  pit.userData.bounds = { x, z, hw: w / 2, hd: d / 2 };
-
-  // Edges
-  const edgesGeo = new THREE.EdgesGeometry(geo);
-  const line = new THREE.LineSegments(edgesGeo, new THREE.LineBasicMaterial({ color: 0x333344 }));
-  line.rotation.x = -Math.PI / 2;
-  line.position.set(x, 0.006, z);
-  scene.add(line);
-  levelObstacles.push(line);
-  return pit;
-}
-
 // ── Letter zones ──
 function addLetterZone(cx, cz, size, type, letter) {
   const c = document.createElement('canvas');
@@ -949,10 +918,9 @@ function startLevel() {
   for (const b of wallBodies) world.removeBody(b);
   wallBodies.length = 0;
 
-  // Build floor for this level (with pit cutouts where needed)
+  // Build floor for this level
   _carvedTiles.clear();
-  const levelPits = currentLevel === 4 ? [{ x: 7, z: 0, w: 4, d: 8 }] : [];
-  buildFloor(levelPits);
+  buildFloor();
 
   // Starting word
   const word = getRandomWord();
@@ -977,7 +945,7 @@ function startLevel() {
     1: 'Push your structure into the red zone using VERBS!',
     2: 'A wall blocks the way. Find a path around it!',
     3: 'The goal is in the air! Build upward momentum!',
-    4: 'A pit separates you from the goal. Gain enough speed to cross!',
+    4: 'Two walls form a corridor. Navigate through!',
     5: 'Letter zones! -X deletes words with X. +X deletes words WITHOUT X. Choose your words carefully!',
   };
 
@@ -998,7 +966,8 @@ function startLevel() {
 
     case 4:
       createEndZone(14, 0, 4, 4);
-      addPit(7, 0, 4, 8);
+      addWall(5, 0, 1, 3, 6);   // left corridor wall
+      addWall(5, 0, 1, 3, -6);  // right corridor wall
       break;
 
     case 5: {
@@ -1444,32 +1413,6 @@ function updatePhysics(dt) {
   world.step(1 / 60, dt, 3);
   syncGroupFromBody();
 
-  // ── Pit detection — remove ground plane when structure COM is over pit ──
-  let overPit = false;
-  for (const obs of levelObstacles) {
-    if (!obs.userData.isPit) continue;
-    const b = obs.userData.bounds;
-    const bx = structureBody.position.x, bz = structureBody.position.z;
-    if (Math.abs(bx - b.x) < b.hw && Math.abs(bz - b.z) < b.hd) {
-      overPit = true;
-      break;
-    }
-  }
-  if (overPit && _groundInWorld) {
-    world.removeBody(groundBody);
-    _groundInWorld = false;
-    levelFalling = true;
-  }
-  if (!overPit && !_groundInWorld) {
-    world.addBody(groundBody);
-    _groundInWorld = true;
-  }
-  if (levelFalling && structureBody.position.y < -5) {
-    showMessage('Fell in the pit! Restarting...', '#ff6b6b');
-    levelComplete = true;
-    setTimeout(() => startLevel(), 1000);
-    return;
-  }
 
   // ── Fell off edge ──
   const floorEdge = 20;

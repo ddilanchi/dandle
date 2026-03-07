@@ -52,9 +52,6 @@ Type detection: WordNet 3.1 (74k words), with hardcoded VERBS/ADJECTIVES as fall
 ### Walls
 - Static rigid bodies the structure must go around or over (Level 2)
 
-### Pits
-- Holes in the floor; structure falls through and restarts (Level 4)
-
 ### Letter Zones (Level 5)
 - Tiles on the floor labeled with a letter
 - **+X**: deletes any word NOT containing letter X
@@ -74,13 +71,12 @@ Type detection: WordNet 3.1 (74k words), with hardcoded VERBS/ADJECTIVES as fall
 | 1 | Open field — learn the basics |
 | 2 | Wall blocking the path |
 | 3 | Elevated end zone (build upward) |
-| 4 | Pit between start and goal |
+| 4 | Corridor walls — navigate through |
 | 5 | Letter zones scattered across the floor |
 
 ---
 
 ## Lose Conditions
-- Structure falls into a pit past y = -5 → auto-restart
 - Structure slides off the edge of the floor → auto-restart
 
 ---

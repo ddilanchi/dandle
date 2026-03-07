@@ -76,7 +76,30 @@
     </div>
   </div>
   <div id="version">v1.0.3</div>
+  <div id="debug-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.92);color:#0f0;font:13px monospace;padding:16px;z-index:999;overflow:auto;white-space:pre-wrap;"></div>
   <canvas id="game-canvas"></canvas>
+  <script>
+    const _debugLines = [];
+    const _debugEl = document.getElementById('debug-overlay');
+    function _dbg(label, msg) {
+      const line = '[' + label + '] ' + msg;
+      _debugLines.push(line);
+      if (_debugLines.length > 60) _debugLines.shift();
+      if (_debugEl.style.display !== 'none') _debugEl.textContent = _debugLines.join('\n');
+    }
+    const _origError = console.error.bind(console);
+    console.error = (...a) => { _dbg('ERR', a.join(' ')); _origError(...a); };
+    const _origWarn = console.warn.bind(console);
+    console.warn = (...a) => { _dbg('WARN', a.join(' ')); _origWarn(...a); };
+    window.addEventListener('error', e => _dbg('THROW', e.message + ' @ ' + e.filename + ':' + e.lineno));
+    window.addEventListener('unhandledrejection', e => _dbg('REJECT', String(e.reason)));
+    window.addEventListener('keydown', e => {
+      if (e.key === '`') {
+        _debugEl.style.display = _debugEl.style.display === 'none' ? 'block' : 'none';
+        _debugEl.textContent = _debugLines.join('\n') || '(no errors captured)';
+      }
+    });
+  </script>
   <script type="module" src="js/game.js"></script>
 </body>
 </html>

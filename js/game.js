@@ -856,9 +856,12 @@ function startLevel() {
   // Starting word
   const word = getRandomWord();
   const startX = -Math.floor(word.length / 2);
+  console.warn('startLevel: placing word ' + word);
   placeWord(word, startX, 0, 'x+', 0);
+  console.warn('startLevel: cubes.length=' + cubes.length);
   lettersUsed = word.length;
-  createStructureBody();
+  try { createStructureBody(); console.warn('createStructureBody ok'); }
+  catch(e) { console.error('createStructureBody failed: ' + e); }
 
   // Camera target
   controls.target.set(0, 0, 0);
@@ -1432,4 +1435,5 @@ window.addEventListener('keydown', () => {
 });
 
 // ── Start ──
+console.warn('game.js loaded, CANNON=' + (typeof CANNON) + ' World=' + (typeof CANNON?.World));
 animate();

@@ -4,6 +4,8 @@ import * as CANNON from 'cannon-es';
 import { getRandomWord, isVerb, getWordTypes, isValidWord, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
+const VERSION = 'v1.0.5';
+
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
 const restartBtn = document.getElementById('restart-btn');
@@ -16,6 +18,10 @@ const submitBtn = document.getElementById('submit-word');
 const messageEl = document.getElementById('message');
 const verbLegend = document.getElementById('verb-legend');
 const levelCompleteEl = document.getElementById('level-complete');
+
+// Set version in both places from single source
+document.getElementById('version').textContent = VERSION;
+document.getElementById('intro-version').textContent = VERSION;
 const introScreen = document.getElementById('intro-screen');
 const pauseScreen = document.getElementById('pause-screen');
 const levelSelectEl = document.getElementById('level-select');

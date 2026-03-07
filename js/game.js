@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { getRandomWord, isVerb } from './wordlist.js';
+import { getRandomWord, isVerb, getWordTypes, isValidWord, initWordNet } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
 // ── DOM ──
@@ -15,6 +15,13 @@ const submitBtn = document.getElementById('submit-word');
 const messageEl = document.getElementById('message');
 const verbLegend = document.getElementById('verb-legend');
 const levelCompleteEl = document.getElementById('level-complete');
+const introScreen = document.getElementById('intro-screen');
+const pauseScreen = document.getElementById('pause-screen');
+const typeSpinner = document.getElementById('type-spinner');
+const spinnerWord = document.getElementById('spinner-word');
+const spinnerType = document.getElementById('spinner-type');
+let gameStarted = false;
+let paused = false;
 
 // ── Three.js setup ──
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -195,8 +202,8 @@ function makeLetterMesh(letter, isVerbCube) {
 }
 
 // ── Place a word in the structure ──
-function placeWord(text, startGx, startGz, dir, wordIdx, animated = false, startGy = 0) {
-  const verb = isVerb(text);
+function placeWord(text, startGx, startGz, dir, wordIdx, animated = false, startGy = 0, forceVerb = null) {
+  const verb = forceVerb !== null ? forceVerb : isVerb(text);
   const placed = [];
   const dirVec = dirToVec(dir);
   const now = performance.now() / 1000;
@@ -912,6 +919,38 @@ function validatePlacement(text, startGx, startGy, startGz, dv) {
   return null; // valid
 }
 
+// ── Word type spinner ──
+function spinWordType(word, types) {
+  return new Promise((resolve) => {
+    if (types.length === 1) {
+      resolve(types[0]);
+      return;
+    }
+    spinnerWord.textContent = word;
+    typeSpinner.classList.remove('hidden');
+    const finalType = types[Math.floor(Math.random() * types.length)];
+    let spins = 0;
+    const totalSpins = 12 + Math.floor(Math.random() * 6);
+    const tick = () => {
+      const t = types[spins % types.length];
+      spinnerType.textContent = t;
+      spinnerType.className = t.toLowerCase();
+      spins++;
+      if (spins >= totalSpins) {
+        spinnerType.textContent = finalType;
+        spinnerType.className = finalType.toLowerCase();
+        setTimeout(() => {
+          typeSpinner.classList.add('hidden');
+          resolve(finalType);
+        }, 600);
+      } else {
+        setTimeout(tick, 80 + spins * 8); // decelerates
+      }
+    };
+    tick();
+  });
+}
+
 // ── Word submission ──
 function submitWord() {
   if (!selectedCube || levelComplete) return;
@@ -923,6 +962,11 @@ function submitWord() {
   }
   if (!/^[A-Z]+$/.test(text)) {
     showMessage('Letters only!');
+    audio.error();
+    return;
+  }
+  if (!isValidWord(text)) {
+    showMessage(`"${text}" is not a valid word`);
     audio.error();
     return;
   }
@@ -973,26 +1017,37 @@ function submitWord() {
     return;
   }
 
-  const wordIdx = words.length;
-  const { placed, verb } = placeWord(text, startGx, startGz, dir, wordIdx, true, startGy);
-
-  // Count only newly placed letters (not shared ones that already existed)
-  const newLetters = placed.filter(c => c.wordIdx === wordIdx).length;
-  lettersUsed += newLetters;
-
-  if (verb) {
-    showMessage(`VERB: "${text}" applies force! (${lettersUsed} letters used)`, '#44ff44');
-  } else {
-    showMessage(`Placed "${text}" (${lettersUsed} letters used)`, '#aaddff');
-  }
-
-  // Deselect
-  selectedCube = null;
-  clearHighlight();
-  removeDirectionArrow();
-  selectedInfoEl.textContent = '';
+  // Check word types and spin if multiple
+  const types = getWordTypes(text);
   inputContainer.classList.add('hidden');
   wordInput.value = '';
+
+  const doPlace = (chosenType) => {
+    const treatAsVerb = chosenType === 'VERB';
+    const wordIdx = words.length;
+    const { placed } = placeWord(text, startGx, startGz, dir, wordIdx, true, startGy, treatAsVerb);
+
+    const newLetters = placed.filter(c => c.wordIdx === wordIdx).length;
+    lettersUsed += newLetters;
+
+    const typeColors = { VERB: '#ff4444', NOUN: '#4488ff', ADJ: '#44dd88' };
+    if (treatAsVerb) {
+      showMessage(`VERB: "${text}" applies force! (${lettersUsed} letters used)`, typeColors.VERB);
+    } else {
+      showMessage(`${chosenType}: "${text}" placed (${lettersUsed} letters used)`, typeColors[chosenType] || '#aaddff');
+    }
+
+    selectedCube = null;
+    clearHighlight();
+    removeDirectionArrow();
+    selectedInfoEl.textContent = '';
+  };
+
+  if (types.length > 1) {
+    spinWordType(text, types).then(doPlace);
+  } else {
+    doPlace(types[0]);
+  }
 }
 
 submitBtn.addEventListener('click', submitWord);
@@ -1074,11 +1129,20 @@ restartBtn.addEventListener('click', () => {
   startLevel();
 });
 
-// ── Level complete handler ──
+// ── Level complete & pause handler ──
 window.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && levelComplete && !levelFalling) {
     currentLevel++;
     startLevel();
+  }
+  if (e.key === 'Escape' && gameStarted) {
+    paused = !paused;
+    pauseScreen.classList.toggle('hidden', !paused);
+    if (paused) {
+      audio.stopMusic();
+    } else {
+      audio.startMusic(currentLevel);
+    }
   }
 });
 
@@ -1165,6 +1229,48 @@ function updatePhysics(dt) {
 
     // Ground contact friction for angular velocity (resists rolling)
     angularVelocity.multiplyScalar(0.92);
+
+    // ── Gravitational tipping ──
+    // When COM projects outside the ground support base, gravity creates torque
+    const halfSz = 0.47;
+    const tipCorners = [
+      new THREE.Vector3(-halfSz, -halfSz, -halfSz),
+      new THREE.Vector3(halfSz, -halfSz, -halfSz),
+      new THREE.Vector3(-halfSz, -halfSz, halfSz),
+      new THREE.Vector3(halfSz, -halfSz, halfSz),
+    ];
+    let sMinX = Infinity, sMaxX = -Infinity;
+    let sMinZ = Infinity, sMaxZ = -Infinity;
+    let hasSupport = false;
+    for (const c of cubes) {
+      const lp = new THREE.Vector3(c.gx, 0.5 + (c.gy || 0), c.gz);
+      for (const corner of tipCorners) {
+        const wp = lp.clone().add(corner);
+        wp.applyQuaternion(structureGroup.quaternion);
+        wp.add(structureGroup.position);
+        if (wp.y < 0.1) {
+          sMinX = Math.min(sMinX, wp.x);
+          sMaxX = Math.max(sMaxX, wp.x);
+          sMinZ = Math.min(sMinZ, wp.z);
+          sMaxZ = Math.max(sMaxZ, wp.z);
+          hasSupport = true;
+        }
+      }
+    }
+    if (hasSupport) {
+      const comWorld = com.clone().applyQuaternion(structureGroup.quaternion)
+        .add(structureGroup.position);
+      const clampedX = Math.max(sMinX, Math.min(sMaxX, comWorld.x));
+      const clampedZ = Math.max(sMinZ, Math.min(sMaxZ, comWorld.z));
+      const overhangX = comWorld.x - clampedX;
+      const overhangZ = comWorld.z - clampedZ;
+      if (Math.abs(overhangX) > 0.02 || Math.abs(overhangZ) > 0.02) {
+        const mass = cubes.length;
+        // τ = r × F: overhang in X → torque around Z, overhang in Z → torque around X
+        angularVelocity.x += overhangZ * mass * GRAVITY * dt / inertia;
+        angularVelocity.z += -overhangX * mass * GRAVITY * dt / inertia;
+      }
+    }
   }
 
   // ── Wall collisions (with pushout so it doesn't get stuck) ──
@@ -1289,18 +1395,21 @@ function updateCamera() {
 const clock = new THREE.Clock();
 function animate() {
   requestAnimationFrame(animate);
-  const dt = Math.min(clock.getDelta(), 0.05);
+  const rawDt = clock.getDelta();
+  const dt = paused ? 0 : Math.min(rawDt, 0.05);
   const time = clock.elapsedTime;
 
-  updateAnimations();
-  updateVerbTimers();
-  updateLetterZones();
-  updateDirectionArrow();
-  audio.setMusicIntensity(cubes.length);
-  updateExplosion(dt);
-  updatePhysics(dt);
-  updateCamera();
-  animateEndZone(time);
+  if (!paused) {
+    updateAnimations();
+    updateVerbTimers();
+    updateLetterZones();
+    updateDirectionArrow();
+    audio.setMusicIntensity(cubes.length);
+    updateExplosion(dt);
+    updatePhysics(dt);
+    updateCamera();
+    animateEndZone(time);
+  }
   controls.update();
   renderer.render(scene, camera);
 }
@@ -1312,6 +1421,23 @@ window.addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
+// ── Intro screen ──
+const startPromptEl = introScreen.querySelector('.start-prompt');
+
+async function beginGame() {
+  if (gameStarted) return;
+  gameStarted = true;
+  startPromptEl.textContent = 'Loading...';
+  await initWordNet();
+  introScreen.classList.add('hidden');
+  audio.init();
+  startLevel();
+}
+
+introScreen.addEventListener('click', beginGame);
+window.addEventListener('keydown', (e) => {
+  if (!gameStarted) beginGame();
+}, { once: true });
+
 // ── Start ──
-startLevel();
 animate();

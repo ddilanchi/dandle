@@ -1,0 +1,23 @@
+{
+  "name": "dandle",
+  "version": "1.0.0",
+  "description": "A 3D word-building physics game. Build crossword-like structures with letter cubes on a checkerboard floor. Verbs apply directional force - use them to push your word structure into the end zone.",
+  "main": "index.js",
+  "scripts": {
+    "build": "node scripts/build-wordnet.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ddilanchi/dandle.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/ddilanchi/dandle/issues"
+  },
+  "homepage": "https://github.com/ddilanchi/dandle#readme",
+  "dependencies": {
+    "wordnet-db": "^3.1.14"
+  }
+}

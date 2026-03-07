@@ -116,6 +116,35 @@ export class AudioManager {
     });
   }
 
+  pop(index) {
+    this.ensure();
+    const t = this.ctx.currentTime;
+    // ascending pitch per block index for a satisfying sequential feel
+    const baseFreq = 400 + index * 60;
+    const o = this.ctx.createOscillator();
+    const g = this.ctx.createGain();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(baseFreq, t);
+    o.frequency.exponentialRampToValueAtTime(baseFreq * 0.7, t + 0.12);
+    g.gain.setValueAtTime(0.2, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.15);
+    o.connect(g).connect(this.ctx.destination);
+    o.start(t);
+    o.stop(t + 0.15);
+
+    // tiny click layer
+    const buf = this.ctx.createBuffer(1, this.ctx.sampleRate * 0.02, this.ctx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * 0.15;
+    const n = this.ctx.createBufferSource();
+    const ng = this.ctx.createGain();
+    n.buffer = buf;
+    ng.gain.setValueAtTime(0.15, t);
+    ng.gain.exponentialRampToValueAtTime(0.001, t + 0.02);
+    n.connect(ng).connect(this.ctx.destination);
+    n.start(t);
+  }
+
   error() {
     this.ensure();
     const t = this.ctx.currentTime;

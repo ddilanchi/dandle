@@ -102,6 +102,11 @@ const VERB_FORCE = 2.5;
 let endZone = null;
 let endZoneBox = null;
 
+// ── Animation queue ──
+const animations = [];  // { mesh, startTime, duration }
+const BLOCK_ANIM_DURATION = 0.25; // seconds per block scale-in
+const BLOCK_ANIM_STAGGER = 0.08; // delay between each block
+
 // ── Create letter cube mesh ──
 function makeLetterMesh(letter, isVerbCube) {
   const mats = [];
@@ -130,10 +135,12 @@ function makeLetterMesh(letter, isVerbCube) {
 }
 
 // ── Place a word in the structure ──
-function placeWord(text, startGx, startGz, dir, wordIdx) {
+function placeWord(text, startGx, startGz, dir, wordIdx, animated = false) {
   const verb = isVerb(text);
   const placed = [];
   const dirVec = dirToVec(dir);
+  const now = performance.now() / 1000;
+  let newBlockIndex = 0;
 
   for (let i = 0; i < text.length; i++) {
     const gx = startGx + dirVec.x * i;
@@ -150,17 +157,43 @@ function placeWord(text, startGx, startGz, dir, wordIdx) {
     mesh.userData.cube = cube;
     cubes.push(cube);
     placed.push(cube);
+
+    if (animated) {
+      // Start at scale 0, animate to 1
+      mesh.scale.set(0, 0, 0);
+      const delay = newBlockIndex * BLOCK_ANIM_STAGGER;
+      animations.push({
+        mesh,
+        startTime: now + delay,
+        duration: BLOCK_ANIM_DURATION,
+        soundIndex: newBlockIndex,
+        soundPlayed: false,
+      });
+    }
+    newBlockIndex++;
   }
 
   const wordEntry = { text, dir, isVerb: verb, length: text.length, arrowHelper: null };
 
-  // Verb force arrow
+  // Verb force arrow (delayed until animation finishes if animated)
   if (verb) {
     const arrowDir = new THREE.Vector3(dirVec.x, 0, dirVec.z).normalize();
     const midIdx = Math.floor(text.length / 2);
     const midCube = placed[midIdx];
     const origin = new THREE.Vector3(midCube.gx, 1.2, midCube.gz);
     const arrow = new THREE.ArrowHelper(arrowDir, origin, 1.5, 0xff2222, 0.4, 0.25);
+    if (animated) {
+      // Hide arrow until last block finishes animating
+      arrow.visible = false;
+      const revealTime = now + newBlockIndex * BLOCK_ANIM_STAGGER + BLOCK_ANIM_DURATION;
+      animations.push({
+        arrow,
+        revealTime,
+        isArrowReveal: true,
+        verbSound: true,
+        soundPlayed: false,
+      });
+    }
     structureGroup.add(arrow);
     wordEntry.arrowHelper = arrow;
     verbLegend.classList.remove('hidden');
@@ -168,6 +201,51 @@ function placeWord(text, startGx, startGz, dir, wordIdx) {
 
   words.push(wordEntry);
   return { placed, verb };
+}
+
+// ── Tick animations ──
+function updateAnimations() {
+  const now = performance.now() / 1000;
+  for (let i = animations.length - 1; i >= 0; i--) {
+    const a = animations[i];
+
+    // Arrow reveal entries
+    if (a.isArrowReveal) {
+      if (now >= a.revealTime) {
+        a.arrow.visible = true;
+        if (!a.soundPlayed) {
+          audio.verb();
+          a.soundPlayed = true;
+        }
+        animations.splice(i, 1);
+      }
+      continue;
+    }
+
+    // Block scale-in
+    if (now < a.startTime) continue;
+    const elapsed = now - a.startTime;
+    let t = Math.min(elapsed / a.duration, 1);
+
+    // Play pop sound when this block starts appearing
+    if (!a.soundPlayed) {
+      audio.pop(a.soundIndex);
+      a.soundPlayed = true;
+    }
+
+    // Overshoot easing for a bouncy pop feel
+    const overshoot = 1.4;
+    t = t < 1
+      ? 1 - Math.pow(1 - t, 3) * (1 + overshoot * (1 - t))
+      : 1;
+
+    a.mesh.scale.set(t, t, t);
+
+    if (elapsed >= a.duration) {
+      a.mesh.scale.set(1, 1, 1);
+      animations.splice(i, 1);
+    }
+  }
 }
 
 function dirToVec(dir) {
@@ -373,11 +451,9 @@ function submitWord() {
   }
 
   const wordIdx = words.length;
-  const { verb } = placeWord(text, startGx, startGz, dir, wordIdx);
+  const { verb } = placeWord(text, startGx, startGz, dir, wordIdx, true);
 
-  audio.place();
   if (verb) {
-    audio.verb();
     showMessage(`VERB: "${text}" applies force!`, '#44ff44');
   } else {
     showMessage(`Placed "${text}"`, '#aaddff');
@@ -475,6 +551,7 @@ function animate() {
   const dt = Math.min(clock.getDelta(), 0.05);
   const time = clock.elapsedTime;
 
+  updateAnimations();
   updatePhysics(dt);
   updateCamera();
   animateEndZone(time);

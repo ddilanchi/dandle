@@ -1495,18 +1495,26 @@ let _fakeProgress = 0;
   setTimeout(pollProgress, 80);
 })();
 
+let audioStarted = false;
+function tryStartTitleMusic() {
+  if (audioStarted) return;
+  audioStarted = true;
+  audio.init();
+  audio.startMusic(0); // level 0 = title screen key
+}
+
 async function beginGame() {
   if (gameStarted) return;
-  if (!isLoadDone()) return; // don't start until loaded
+  tryStartTitleMusic();
+  if (!isLoadDone()) return;
   gameStarted = true;
-  audio.init();
   introScreen.classList.add('hidden');
   showLevelSelect();
 }
 
 introScreen.addEventListener('click', beginGame);
-window.addEventListener('keydown', (e) => {
-  if (!gameStarted && isLoadDone()) beginGame();
+window.addEventListener('keydown', () => {
+  if (!gameStarted) beginGame();
 });
 
 // ── Start ──

@@ -1474,22 +1474,25 @@ const introLoaderBar = document.getElementById('intro-loader-bar');
 const introLoaderText = document.getElementById('intro-loader-text');
 const introLoader = document.getElementById('intro-loader');
 
+// Animate a fake progress bar that fills up over ~3s, then snaps to done
+let _fakeProgress = 0;
 (function pollProgress() {
-  const pct = Math.round(getLoadProgress() * 100);
-  introLoaderBar.style.setProperty('--progress', pct + '%');
   if (isLoadDone()) {
-    const err = getLoadError();
-    if (err) {
-      introLoaderText.textContent = 'Dictionary unavailable — playing without validation';
-    } else {
-      introLoaderText.textContent = `Dictionary loaded`;
-    }
-    introLoader.style.opacity = '0.5';
-    startPromptEl.classList.remove('hidden');
-  } else {
-    introLoaderText.textContent = `Loading dictionary... ${pct}%`;
-    setTimeout(pollProgress, 100);
+    introLoaderBar.style.setProperty('--progress', '100%');
+    introLoaderText.textContent = getLoadError()
+      ? 'Playing without dictionary'
+      : 'Dictionary ready!';
+    setTimeout(() => {
+      introLoader.style.opacity = '0.4';
+      startPromptEl.classList.remove('hidden');
+    }, 300);
+    return;
   }
+  // Ease toward 90% while waiting, never quite reaching it
+  _fakeProgress += (0.9 - _fakeProgress) * 0.04;
+  introLoaderBar.style.setProperty('--progress', Math.round(_fakeProgress * 100) + '%');
+  introLoaderText.textContent = `Loading dictionary...`;
+  setTimeout(pollProgress, 80);
 })();
 
 async function beginGame() {

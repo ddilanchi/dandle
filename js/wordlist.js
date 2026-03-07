@@ -6,43 +6,22 @@ let _loadProgress = 0; // 0–1
 let _loadDone = false;
 let _loadError = null;
 
-const _loadPromise = (async () => {
-  try {
-    const res = await fetch('./wordnet-data.json');
+const _loadPromise = fetch('./wordnet-data.json')
+  .then(res => {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
-    const contentLength = parseInt(res.headers.get('content-length') || '0', 10);
-    const reader = res.body.getReader();
-    const chunks = [];
-    let received = 0;
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      chunks.push(value);
-      received += value.length;
-      if (contentLength > 0) _loadProgress = received / contentLength;
-    }
-
-    _loadProgress = 0.95;
-    // Decode and parse off main thread isn't possible without a worker,
-    // but concatenate chunks efficiently first
-    let totalLen = 0;
-    for (const c of chunks) totalLen += c.length;
-    const merged = new Uint8Array(totalLen);
-    let offset = 0;
-    for (const c of chunks) { merged.set(c, offset); offset += c.length; }
-    const text = new TextDecoder().decode(merged);
-    _wordnet = JSON.parse(text);
+    return res.json();
+  })
+  .then(data => {
+    _wordnet = data;
     _loadProgress = 1;
-  } catch (e) {
+  })
+  .catch(e => {
     _loadError = e;
-    console.warn('WordNet load failed — falling back to permissive mode:', e.message);
+    console.warn('WordNet load failed:', e.message);
     _wordnet = {};
     _loadProgress = 1;
-  }
-  _loadDone = true;
-})();
+  })
+  .finally(() => { _loadDone = true; });
 
 export function getLoadProgress() { return _loadProgress; }
 export function isLoadDone() { return _loadDone; }

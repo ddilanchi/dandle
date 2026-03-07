@@ -101,9 +101,12 @@ scene.add(structureGroup);
 const cubes = [];       // { letter, gx, gy, gz, mesh, wordIdx }
 const words = [];       // { text, dir, isVerb, arrowHelper }
 const velocity = new THREE.Vector3();
+const angularVelocity = new THREE.Vector3();
 const FRICTION = 0.97;
+const ANG_FRICTION = 0.95;
 const VERB_FORCE = 2.5;
 const VERB_DELAY = 3; // seconds before verb activates
+const GRAVITY = 15;
 
 let endZone = null;
 let endZoneBox = null;
@@ -117,6 +120,52 @@ const letterZones = [];    // { x, z, size, type: '+'/'-', letter, mesh }
 const animations = [];  // { mesh, startTime, duration }
 const BLOCK_ANIM_DURATION = 0.25; // seconds per block scale-in
 const BLOCK_ANIM_STAGGER = 0.08; // delay between each block
+
+// ── Rigid body helpers ──
+function computeCOM() {
+  if (cubes.length === 0) return new THREE.Vector3(0, 0.5, 0);
+  let cx = 0, cy = 0, cz = 0;
+  for (const c of cubes) {
+    cx += c.gx;
+    cy += 0.5 + (c.gy || 0);
+    cz += c.gz;
+  }
+  return new THREE.Vector3(cx / cubes.length, cy / cubes.length, cz / cubes.length);
+}
+
+function computeInertia() {
+  const com = computeCOM();
+  let inertia = 0;
+  for (const c of cubes) {
+    const dx = c.gx - com.x;
+    const dy = 0.5 + (c.gy || 0) - com.y;
+    const dz = c.gz - com.z;
+    inertia += dx * dx + dy * dy + dz * dz + 1 / 6;
+  }
+  return Math.max(inertia, 0.5);
+}
+
+// Get the lowest world-space Y of any cube corner (accounting for rotation)
+function getLowestPoint() {
+  let minY = Infinity;
+  const halfSize = 0.47;
+  const corners = [
+    new THREE.Vector3(-halfSize, -halfSize, -halfSize),
+    new THREE.Vector3(halfSize, -halfSize, -halfSize),
+    new THREE.Vector3(-halfSize, -halfSize, halfSize),
+    new THREE.Vector3(halfSize, -halfSize, halfSize),
+  ];
+  for (const c of cubes) {
+    const localPos = new THREE.Vector3(c.gx, 0.5 + (c.gy || 0), c.gz);
+    for (const corner of corners) {
+      const wp = localPos.clone().add(corner);
+      wp.applyQuaternion(structureGroup.quaternion);
+      wp.add(structureGroup.position);
+      if (wp.y < minY) minY = wp.y;
+    }
+  }
+  return minY;
+}
 
 // ── Create letter cube mesh ──
 function makeLetterMesh(letter, isVerbCube) {
@@ -669,8 +718,9 @@ function startLevel() {
   words.length = 0;
   animations.length = 0;
   velocity.set(0, 0, 0);
+  angularVelocity.set(0, 0, 0);
   structureGroup.position.set(0, 0, 0);
-  structureGroup.position.y = 0;
+  structureGroup.quaternion.identity();
   selectedCube = null;
   clearHighlight();
   removeDirectionArrow();
@@ -834,8 +884,8 @@ function validatePlacement(text, startGx, startGy, startGz, dv) {
   const afterGz = startGz + dv.z * text.length;
 
   // Check if there's an existing cube just before or after the word
-  const cubeBefore = cubes.find(c => c.gx === beforeGx && c.gy === beforeGy && c.gz === beforeGz);
-  const cubeAfter = cubes.find(c => c.gx === afterGx && c.gy === afterGy && c.gz === afterGz);
+  const cubeBefore = cubes.find(c => c.gx === beforeGx && (c.gy || 0) === beforeGy && c.gz === beforeGz);
+  const cubeAfter = cubes.find(c => c.gx === afterGx && (c.gy || 0) === afterGy && c.gz === afterGz);
   if (cubeBefore) return `Word would extend from an existing [${cubeBefore.letter}] — invalid adjacency`;
   if (cubeAfter) return `Word would extend into an existing [${cubeAfter.letter}] — invalid adjacency`;
 
@@ -845,7 +895,7 @@ function validatePlacement(text, startGx, startGy, startGz, dv) {
     const gz = startGz + dv.z * i;
 
     // Skip positions where a cube already exists (intersection)
-    const existing = cubes.find(c => c.gx === gx && c.gy === gy && c.gz === gz);
+    const existing = cubes.find(c => c.gx === gx && (c.gy || 0) === gy && c.gz === gz);
     if (existing) continue;
 
     // For each new cube, check perpendicular neighbors
@@ -853,7 +903,7 @@ function validatePlacement(text, startGx, startGy, startGz, dv) {
       const nx = gx + perp.x;
       const ny = gy + perp.y;
       const nz = gz + perp.z;
-      const neighbor = cubes.find(c => c.gx === nx && c.gy === ny && c.gz === nz);
+      const neighbor = cubes.find(c => c.gx === nx && (c.gy || 0) === ny && c.gz === nz);
       if (neighbor) {
         return `[${text[i]}] would be adjacent to [${neighbor.letter}] — no valid cross-word`;
       }
@@ -1032,47 +1082,131 @@ window.addEventListener('keydown', (e) => {
   }
 });
 
+// ── Helper: get world position of a cube (accounting for group transform) ──
+function cubeWorldPos(c) {
+  const local = new THREE.Vector3(c.gx, 0.5 + (c.gy || 0), c.gz);
+  local.applyQuaternion(structureGroup.quaternion);
+  local.add(structureGroup.position);
+  return local;
+}
+
+let lastCollisionTime = 0; // throttle collision sounds
+
 // ── Physics update ──
 function updatePhysics(dt) {
   if (levelComplete) return;
+  if (cubes.length === 0) return;
 
-  // Apply verb forces (only active verbs)
+  const com = computeCOM();
+  const inertia = computeInertia();
+
+  // ── Apply verb forces at their position (creates torque) ──
   for (const w of words) {
-    if (!w.isVerb || !w.active) continue;
+    if (!w.isVerb || !w.active || w._deleted) continue;
     const dv = dirToVec(w.dir);
-    const force = VERB_FORCE * w.length;
-    velocity.x += dv.x * force * dt;
-    velocity.z += dv.z * force * dt;
+    const forceMag = VERB_FORCE * w.length;
+    const forceVec = new THREE.Vector3(dv.x * forceMag, (dv.y || 0) * forceMag, dv.z * forceMag);
+
+    // Apply at the middle cube of the verb word
+    const wordCubes = cubes.filter(c => c.wordIdx === words.indexOf(w));
+    if (wordCubes.length === 0) continue;
+    const midCube = wordCubes[Math.floor(wordCubes.length / 2)];
+    const forcePoint = new THREE.Vector3(midCube.gx, 0.5 + (midCube.gy || 0), midCube.gz);
+
+    // Linear force (applied to COM)
+    velocity.add(forceVec.clone().multiplyScalar(dt));
+
+    // Torque = r x F (r = force point - COM)
+    const r = forcePoint.clone().sub(com);
+    const torque = new THREE.Vector3().crossVectors(r, forceVec);
+    angularVelocity.add(torque.multiplyScalar(dt / inertia));
   }
 
-  // Friction
+  // ── Gravity ──
+  velocity.y -= GRAVITY * dt;
+
+  // ── Linear friction ──
   velocity.x *= FRICTION;
   velocity.z *= FRICTION;
 
-  // Move structure
+  // ── Angular damping ──
+  angularVelocity.multiplyScalar(ANG_FRICTION);
+
+  // ── Move structure ──
   structureGroup.position.x += velocity.x * dt;
+  structureGroup.position.y += velocity.y * dt;
   structureGroup.position.z += velocity.z * dt;
 
-  // ── Wall collisions ──
+  // ── Apply angular velocity to quaternion ──
+  const angMag = angularVelocity.length();
+  if (angMag > 0.001) {
+    const axis = angularVelocity.clone().normalize();
+    const dq = new THREE.Quaternion().setFromAxisAngle(axis, angMag * dt);
+    structureGroup.quaternion.premultiply(dq);
+    structureGroup.quaternion.normalize();
+  }
+
+  // ── Ground contact ──
+  const lowestY = getLowestPoint();
+  if (lowestY < 0) {
+    // Push up so lowest point sits at y=0
+    structureGroup.position.y -= lowestY;
+
+    // Ground friction on bounce
+    if (velocity.y < -0.5) {
+      const now = performance.now() / 1000;
+      if (now - lastCollisionTime > 0.15) {
+        audio.collision();
+        lastCollisionTime = now;
+      }
+    }
+    velocity.y *= -0.2; // bounce damping
+    if (Math.abs(velocity.y) < 0.3) velocity.y = 0;
+
+    // Ground contact friction for angular velocity (resists rolling)
+    angularVelocity.multiplyScalar(0.92);
+  }
+
+  // ── Wall collisions (with pushout so it doesn't get stuck) ──
   const sp = structureGroup.position;
   for (const obs of levelObstacles) {
     if (!obs.userData.isWall) continue;
     const wallBox = new THREE.Box3().setFromObject(obs);
+    let hitWall = false;
     for (const c of cubes) {
-      const wx = c.mesh.position.x + sp.x;
-      const wz = c.mesh.position.z + sp.z;
-      const cubeBox = new THREE.Box3().setFromCenterAndSize(
-        new THREE.Vector3(wx, 0.5, wz),
-        new THREE.Vector3(0.94, 0.94, 0.94)
-      );
+      const wp = cubeWorldPos(c);
+      const cubeBox = new THREE.Box3().setFromCenterAndSize(wp, new THREE.Vector3(0.94, 0.94, 0.94));
       if (cubeBox.intersectsBox(wallBox)) {
-        // Bounce back
-        structureGroup.position.x -= velocity.x * dt * 2;
-        structureGroup.position.z -= velocity.z * dt * 2;
-        velocity.x *= -0.3;
-        velocity.z *= -0.3;
-        audio.collision();
+        // Compute push direction: from wall center to cube
+        const wallCenter = new THREE.Vector3();
+        wallBox.getCenter(wallCenter);
+        const pushDir = wp.clone().sub(wallCenter);
+        pushDir.y = 0;
+        pushDir.normalize();
+
+        // Push structure out
+        structureGroup.position.add(pushDir.clone().multiplyScalar(0.15));
+
+        // Reflect velocity off wall normal
+        const velDot = velocity.dot(pushDir);
+        if (velDot < 0) {
+          velocity.add(pushDir.clone().multiplyScalar(-velDot * 1.3));
+        }
+
+        // Add spin from wall hit
+        const hitR = wp.clone().sub(structureGroup.position);
+        const hitTorque = new THREE.Vector3().crossVectors(hitR, pushDir);
+        angularVelocity.add(hitTorque.multiplyScalar(0.3));
+
+        hitWall = true;
         break;
+      }
+    }
+    if (hitWall) {
+      const now = performance.now() / 1000;
+      if (now - lastCollisionTime > 0.15) {
+        audio.collision();
+        lastCollisionTime = now;
       }
     }
   }
@@ -1081,26 +1215,20 @@ function updatePhysics(dt) {
   for (const obs of levelObstacles) {
     if (!obs.userData.isPit) continue;
     const b = obs.userData.bounds;
-    let inPit = false;
     for (const c of cubes) {
-      const wx = c.mesh.position.x + sp.x;
-      const wz = c.mesh.position.z + sp.z;
-      if (Math.abs(wx - b.x) < b.hw && Math.abs(wz - b.z) < b.hd) {
-        inPit = true;
-        break;
-      }
-    }
-    if (inPit) {
-      levelFalling = true;
-      structureGroup.position.y -= 8 * dt;
-      if (structureGroup.position.y < -5) {
-        audio.collision();
-        showMessage('Fell in the pit! Restarting...', '#ff6b6b');
-        levelComplete = true;
-        setTimeout(() => startLevel(), 1000);
+      const wp = cubeWorldPos(c);
+      if (Math.abs(wp.x - b.x) < b.hw && Math.abs(wp.z - b.z) < b.hd) {
+        levelFalling = true;
+        velocity.y -= 10 * dt;
+        if (structureGroup.position.y < -5) {
+          audio.collision();
+          showMessage('Fell in the pit! Restarting...', '#ff6b6b');
+          levelComplete = true;
+          setTimeout(() => startLevel(), 1000);
+          return;
+        }
         return;
       }
-      return;
     }
   }
 
@@ -1108,16 +1236,15 @@ function updatePhysics(dt) {
   const floorEdge = 20;
   let onPlatform = false;
   for (const c of cubes) {
-    const wx = Math.abs(c.mesh.position.x + sp.x);
-    const wz = Math.abs(c.mesh.position.z + sp.z);
-    if (wx < floorEdge && wz < floorEdge) {
+    const wp = cubeWorldPos(c);
+    if (Math.abs(wp.x) < floorEdge && Math.abs(wp.z) < floorEdge) {
       onPlatform = true;
       break;
     }
   }
-  if (!onPlatform && cubes.length > 0) {
+  if (!onPlatform) {
     levelFalling = true;
-    structureGroup.position.y -= 5 * dt;
+    velocity.y -= 10 * dt;
     if (structureGroup.position.y < -5) {
       audio.collision();
       showMessage('Fell off! Restarting...', '#ff6b6b');
@@ -1131,11 +1258,8 @@ function updatePhysics(dt) {
   // ── Check win - any cube in end zone? ──
   if (endZoneBox) {
     for (const c of cubes) {
-      const wx = c.mesh.position.x + sp.x;
-      const wz = c.mesh.position.z + sp.z;
-      const wy = c.mesh.position.y + sp.y;
-      const p = new THREE.Vector3(wx, wy, wz);
-      if (endZoneBox.containsPoint(p)) {
+      const wp = cubeWorldPos(c);
+      if (endZoneBox.containsPoint(wp)) {
         levelComplete = true;
         levelCompleteEl.querySelector('h1').textContent = 'Level Complete!';
         levelCompleteEl.querySelector('p').textContent =

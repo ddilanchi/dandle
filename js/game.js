@@ -4,7 +4,7 @@ import * as CANNON from 'cannon-es';
 import { getRandomWord, isVerb, getWordTypes, isValidWord, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v1.3.0';
+const VERSION = 'v1.3.1';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -469,6 +469,18 @@ function _placeNextLetter() {
   });
 }
 
+function _arrowAlwaysOnTop(arrow) {
+  arrow.renderOrder = 999;
+  arrow.traverse(child => {
+    if (child.material) {
+      child.material.depthTest = false;
+      child.material.depthWrite = false;
+      child.material.transparent = true;
+      child.material.opacity = 0.9;
+    }
+  });
+}
+
 function _addVerbArrow(wordEntry, dirVec, text, wordIdx) {
   if (!wordEntry.isVerb) return;
   const arrowDir = new THREE.Vector3(dirVec.x, 0, dirVec.z).normalize();
@@ -476,8 +488,9 @@ function _addVerbArrow(wordEntry, dirVec, text, wordIdx) {
   const wordCubes = cubes.filter(c => c.wordIdx === wordIdx);
   const midCube = wordCubes[Math.min(midIdx, wordCubes.length - 1)];
   if (!midCube) return;
-  const origin = new THREE.Vector3(midCube.gx, 1.2 + (midCube.gy || 0), midCube.gz);
-  const arrow = new THREE.ArrowHelper(arrowDir, origin, 1.5, 0xff2222, 0.4, 0.25);
+  const origin = new THREE.Vector3(midCube.gx, 1.5 + (midCube.gy || 0), midCube.gz);
+  const arrow = new THREE.ArrowHelper(arrowDir, origin, 2, 0xff2222, 0.5, 0.3);
+  _arrowAlwaysOnTop(arrow);
   arrow.visible = false;
   structureGroup.add(arrow);
   wordEntry.arrowHelper = arrow;
@@ -899,6 +912,7 @@ function updateDirectionArrow() {
     directionArrow.setDirection(arrowDir);
   } else {
     directionArrow = new THREE.ArrowHelper(arrowDir, origin, 2, 0x4488ff, 0.35, 0.2);
+    _arrowAlwaysOnTop(directionArrow);
     scene.add(directionArrow); // scene-level so position is in world space
   }
 }

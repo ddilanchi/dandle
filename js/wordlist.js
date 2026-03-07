@@ -49,7 +49,7 @@ let _loadProgress = 0;
 let _loadDone = false;
 let _loadError = null;
 
-const _loadPromise = fetch('./wordnet-data.json')
+const _loadPromise = fetch('./js/wordnet-data.json')
   .then(res => {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return res.json();

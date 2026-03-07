@@ -4,7 +4,7 @@ import * as CANNON from 'cannon-es';
 import { getRandomWord, isVerb, getWordTypes, isValidWord, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v1.1.0';
+const VERSION = 'v1.1.1';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -163,18 +163,23 @@ let floorMesh = null;
 const FLOOR_HALF = 20; // floor extends -20..+20
 const TILE_H = 0.5;
 
+let _currentPits = [];
+let _carvedTiles = new Set(); // "gx,gz" keys for tiles removed by underground cubes
+
 function buildFloor(pits = []) {
+  _currentPits = pits;
   if (floorMesh) { scene.remove(floorMesh); floorMesh = null; }
   if (groundBody) { world.removeBody(groundBody); groundBody = null; }
 
   const green = new THREE.Color(0x6aad7a);
   const beige = new THREE.Color(0xece0c0);
 
-  // Collect tile positions, skipping pit areas
+  // Collect tile positions, skipping pits and carved-out tiles
   const tilePositions = [];
   for (let xi = -FLOOR_HALF; xi < FLOOR_HALF; xi++) {
     for (let zi = -FLOOR_HALF; zi < FLOOR_HALF; zi++) {
       const tx = xi + 0.5, tz = zi + 0.5;
+      if (_carvedTiles.has(`${xi},${zi}`)) continue;
       const inPit = pits.some(p =>
         tx > p.x - p.w / 2 && tx < p.x + p.w / 2 &&
         tz > p.z - p.d / 2 && tz < p.z + p.d / 2
@@ -223,6 +228,23 @@ function buildFloor(pits = []) {
   }
   groundBody.position.set(0, -H, 0);
   world.addBody(groundBody);
+}
+
+// Carve floor tiles where cubes are underground, then rebuild
+function carveFloorForUndergroundCubes() {
+  let changed = false;
+  for (const c of cubes) {
+    const gy = c.gy || 0;
+    if (gy < 0) {
+      // This cube is underground — remove floor tile at its grid position
+      const key = `${c.gx},${c.gz}`;
+      if (!_carvedTiles.has(key)) {
+        _carvedTiles.add(key);
+        changed = true;
+      }
+    }
+  }
+  if (changed) buildFloor(_currentPits);
 }
 
 // ── Raycaster ──
@@ -525,11 +547,10 @@ function dirFromMouse(cubeGx, cubeGy, cubeGz) {
   const ay = Math.abs(dy);
   const az = Math.abs(dz);
 
-  // Pick the dominant axis (never allow y- — can't build into the floor)
-  if (ay >= ax && ay >= az && dy >= 0) {
-    return 'y+';
+  // Pick the dominant axis
+  if (ay >= ax && ay >= az) {
+    return dy >= 0 ? 'y+' : 'y-';
   }
-  // Horizontal fallback
   if (ax >= az) {
     return dx >= 0 ? 'x+' : 'x-';
   }
@@ -948,6 +969,7 @@ function startLevel() {
   wallBodies.length = 0;
 
   // Build floor for this level (with pit cutouts where needed)
+  _carvedTiles.clear();
   const levelPits = currentLevel === 4 ? [{ x: 7, z: 0, w: 4, d: 8 }] : [];
   buildFloor(levelPits);
 
@@ -1176,6 +1198,11 @@ function submitWord() {
     audio.error();
     return;
   }
+  if (!isValidWord(text)) {
+    showMessage(`"${text}" is not a real word`);
+    audio.error();
+    return;
+  }
   const letter = selectedCube.letter;
   const idx = text.indexOf(letter);
   if (idx === -1) {
@@ -1231,6 +1258,7 @@ function submitWord() {
     const treatAsVerb = chosenType === 'VERB';
     const wordIdx = words.length;
     const { placed } = placeWord(text, startGx, startGz, dir, wordIdx, true, startGy, treatAsVerb);
+    carveFloorForUndergroundCubes();
     createStructureBody();
 
     const newLetters = placed.filter(c => c.wordIdx === wordIdx).length;

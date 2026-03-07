@@ -4,7 +4,7 @@ import * as CANNON from 'cannon-es';
 import { getRandomWord, isVerb, getWordTypes, isValidWord, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v1.2.1';
+const VERSION = 'v1.2.2';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -393,9 +393,7 @@ function placeWord(text, startGx, startGz, dir, wordIdx, animated = false, start
       continue;
     }
     const mesh = makeLetterMesh(text[i], verb);
-    const targetY = 0.5 + gy;
-    const spawnY = animated ? targetY + 2 : targetY;
-    mesh.position.set(gx, spawnY, gz);
+    mesh.position.set(gx, 0.5 + gy, gz);
     structureGroup.add(mesh);
     const cube = { letter: text[i], gx, gy, gz, mesh, wordIdx };
     mesh.userData.cube = cube;
@@ -403,7 +401,7 @@ function placeWord(text, startGx, startGz, dir, wordIdx, animated = false, start
     placed.push(cube);
 
     if (animated) {
-      // Start at scale 0 above target, animate scale in + drop down
+      // Start at scale 0, animate to 1
       mesh.scale.set(0, 0, 0);
       const delay = newBlockIndex * BLOCK_ANIM_STAGGER;
       animations.push({
@@ -412,8 +410,6 @@ function placeWord(text, startGx, startGz, dir, wordIdx, animated = false, start
         duration: BLOCK_ANIM_DURATION,
         soundIndex: newBlockIndex,
         soundPlayed: false,
-        dropFrom: spawnY,
-        dropTo: targetY,
       });
     }
     newBlockIndex++;
@@ -495,20 +491,9 @@ function updateAnimations() {
 
       a.mesh.scale.set(t, t, t);
 
-      // Drop from spawn height to target
-      if (a.dropFrom !== undefined) {
-        const dropT = Math.min(elapsed / a.duration, 1);
-        a.mesh.position.y = a.dropFrom + (a.dropTo - a.dropFrom) * dropT;
-      }
-
       if (elapsed >= a.duration) {
         a.mesh.scale.set(1, 1, 1);
-        if (a.dropTo !== undefined) a.mesh.position.y = a.dropTo;
         animations.splice(i, 1);
-        // Rebuild physics body when last block animation finishes
-        if (!animations.some(aa => !aa.isShrink && !aa.isArrowReveal)) {
-          createStructureBody();
-        }
       }
     }
   }
@@ -1211,7 +1196,7 @@ function submitWord() {
     const treatAsVerb = chosenType === 'VERB';
     const wordIdx = words.length;
     const { placed } = placeWord(text, startGx, startGz, dir, wordIdx, true, startGy, treatAsVerb);
-    // Body rebuilt after animation finishes (in updateAnimations)
+    createStructureBody();
 
     const newLetters = placed.filter(c => c.wordIdx === wordIdx).length;
     lettersUsed += newLetters;

@@ -4,7 +4,7 @@ import * as CANNON from 'cannon-es';
 import { getRandomWord, isVerb, getWordTypes, isValidWord, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v1.5.2';
+const VERSION = 'v1.5.3';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -1424,6 +1424,13 @@ function submitWord() {
 }
 
 submitBtn.addEventListener('click', submitWord);
+// Keep input focused whenever a cube is selected
+wordInput.addEventListener('blur', () => {
+  if (selectedCube && !levelComplete && !paused && !_placementQueue) {
+    setTimeout(() => wordInput.focus(), 0);
+  }
+});
+
 wordInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { submitWord(); return; }
 

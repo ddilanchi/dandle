@@ -4,7 +4,7 @@ import * as CANNON from 'cannon-es';
 import { getRandomWord, isVerb, getWordTypes, isValidWord, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v1.1.3';
+const VERSION = 'v1.1.4';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -163,7 +163,6 @@ let floorMesh = null;
 const FLOOR_HALF = 20; // floor extends -20..+20
 const TILE_H = 1;
 
-let _carvedTiles = new Set(); // "gx,gz" keys for tiles removed by underground cubes
 
 function buildFloor() {
   if (floorMesh) { scene.remove(floorMesh); floorMesh = null; }
@@ -174,7 +173,6 @@ function buildFloor() {
   const tilePositions = [];
   for (let xi = -FLOOR_HALF; xi < FLOOR_HALF; xi++) {
     for (let zi = -FLOOR_HALF; zi < FLOOR_HALF; zi++) {
-      if (_carvedTiles.has(`${xi},${zi}`)) continue;
       tilePositions.push({ tx: xi + 0.5, tz: zi + 0.5, xi, zi });
     }
   }
@@ -198,22 +196,6 @@ function buildFloor() {
   if (!world.bodies.includes(groundBody)) world.addBody(groundBody);
 }
 
-// Carve floor tiles where cubes are underground, then rebuild
-function carveFloorForUndergroundCubes() {
-  let changed = false;
-  for (const c of cubes) {
-    const gy = c.gy || 0;
-    if (gy < 0) {
-      // This cube is underground — remove floor tile at its grid position
-      const key = `${c.gx},${c.gz}`;
-      if (!_carvedTiles.has(key)) {
-        _carvedTiles.add(key);
-        changed = true;
-      }
-    }
-  }
-  if (changed) buildFloor();
-}
 
 // ── Raycaster ──
 const raycaster = new THREE.Raycaster();
@@ -302,8 +284,6 @@ function createStructureBody() {
   const comWorld = _comLocal.clone()
     .applyQuaternion(structureGroup.quaternion)
     .add(structureGroup.position);
-  // Ensure structure doesn't clip below ground
-  comWorld.y = Math.max(comWorld.y, cy);
   body.position.set(comWorld.x, comWorld.y, comWorld.z);
   body.quaternion.set(
     structureGroup.quaternion.x, structureGroup.quaternion.y,
@@ -919,7 +899,6 @@ function startLevel() {
   wallBodies.length = 0;
 
   // Build floor for this level
-  _carvedTiles.clear();
   buildFloor();
 
   // Starting word
@@ -1208,7 +1187,6 @@ function submitWord() {
     const treatAsVerb = chosenType === 'VERB';
     const wordIdx = words.length;
     const { placed } = placeWord(text, startGx, startGz, dir, wordIdx, true, startGy, treatAsVerb);
-    carveFloorForUndergroundCubes();
     createStructureBody();
 
     const newLetters = placed.filter(c => c.wordIdx === wordIdx).length;

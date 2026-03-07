@@ -4,7 +4,7 @@ import * as CANNON from 'cannon-es';
 import { getRandomWord, isVerb, getWordTypes, isValidWord, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v1.1.4';
+const VERSION = 'v1.1.5';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -213,7 +213,7 @@ scene.add(structureGroup);
 
 const cubes = [];       // { letter, gx, gy, gz, mesh, wordIdx }
 const words = [];       // { text, dir, isVerb, arrowHelper }
-const VERB_FORCE = 18;  // impulse magnitude per letter
+const VERB_FORCE = 5;  // continuous force magnitude
 const VERB_DELAY = 3;   // seconds before verb activates
 const GRAVITY = 20;
 
@@ -779,7 +779,7 @@ function updateVerbTimers() {
         if (w.arrowHelper) w.arrowHelper.visible = false;
       } else if (structureBody) {
         const dv = dirToVec(w.dir);
-        const thrust = VERB_FORCE * structureBody.mass;
+        const thrust = VERB_FORCE * w.text.length;
         const worldForce = new CANNON.Vec3(dv.x * thrust, 0, dv.z * thrust);
         const wordCubes = cubes.filter(c => c.wordIdx === words.indexOf(w));
         if (wordCubes.length > 0) {

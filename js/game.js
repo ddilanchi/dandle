@@ -4,7 +4,7 @@ import * as CANNON from 'cannon-es';
 import { getRandomWord, isVerb, getWordTypes, isValidWord, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v1.3.1';
+const VERSION = 'v1.3.2';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -291,6 +291,7 @@ function createStructureBody() {
   const oldBody = structureBody;
   if (oldBody) world.removeBody(oldBody);
   structureBody = null;
+
   if (cubes.length === 0) return;
 
   // Compute COM in local space
@@ -436,7 +437,6 @@ function _placeNextLetter() {
   if (!_placementQueue) return;
   const q = _placementQueue;
   if (q.index >= q.letters.length) {
-    // All letters placed — add verb arrow, done
     _addVerbArrow(q.wordEntry, q.dirVec, q.text, q.wordIdx);
     _placementQueue = null;
     return;
@@ -444,8 +444,14 @@ function _placeNextLetter() {
 
   const l = q.letters[q.index];
   const mesh = makeLetterMesh(l.letter, l.verb);
-  mesh.position.set(l.gx, 0.5 + l.gy, l.gz);
-  mesh.scale.set(0, 0, 0);
+
+  // Start at the previous cube's position (parent), slide to target
+  const prev = q.index > 0 ? q.letters[q.index - 1] : null;
+  const fromX = prev ? prev.gx : (l.gx - q.dirVec.x);
+  const fromY = prev ? (0.5 + prev.gy) : (0.5 + l.gy - (q.dirVec.y || 0));
+  const fromZ = prev ? prev.gz : (l.gz - q.dirVec.z);
+  mesh.position.set(fromX, fromY, fromZ);
+
   structureGroup.add(mesh);
   const cube = { letter: l.letter, gx: l.gx, gy: l.gy, gz: l.gz, mesh, wordIdx: l.wordIdx };
   mesh.userData.cube = cube;
@@ -458,11 +464,13 @@ function _placeNextLetter() {
     startTime: now,
     duration: BLOCK_ANIM_DURATION,
     soundIndex: q.index,
-    soundPlayed: true, // already played
+    soundPlayed: true,
+    isSlide: true,
+    fromX, fromY, fromZ,
+    toX: l.gx, toY: 0.5 + l.gy, toZ: l.gz,
     onComplete: () => {
-      // Rebuild physics with the new cube included
+      mesh.position.set(l.gx, 0.5 + l.gy, l.gz);
       createStructureBody();
-      // Place next letter
       q.index++;
       _placeNextLetter();
     },
@@ -538,16 +546,22 @@ function updateAnimations() {
         if (ci !== -1) cubes.splice(ci, 1);
         animations.splice(i, 1);
       }
+    } else if (a.isSlide) {
+      // Slide from parent cube to target position
+      const ease = t < 1 ? 1 - Math.pow(1 - t, 3) : 1;
+      a.mesh.position.set(
+        a.fromX + (a.toX - a.fromX) * ease,
+        a.fromY + (a.toY - a.fromY) * ease,
+        a.fromZ + (a.toZ - a.fromZ) * ease
+      );
+      if (t >= 1) {
+        animations.splice(i, 1);
+        if (a.onComplete) a.onComplete();
+      }
     } else {
-      // Overshoot easing for a bouncy pop feel
-      const overshoot = 1.4;
-      t = t < 1
-        ? 1 - Math.pow(1 - t, 3) * (1 + overshoot * (1 - t))
-        : 1;
-
+      // Scale-in (legacy)
       a.mesh.scale.set(t, t, t);
-
-      if (elapsed >= a.duration) {
+      if (t >= 1) {
         a.mesh.scale.set(1, 1, 1);
         animations.splice(i, 1);
         if (a.onComplete) a.onComplete();

@@ -25,6 +25,7 @@ const _loadPromise = fetch('./wordnet-data.json')
 
 export function getLoadProgress() { return _loadProgress; }
 export function isLoadDone() { return _loadDone; }
+export function loadFailed() { return !!_loadError; }
 export function getLoadError() { return _loadError; }
 
 export async function initWordNet() {

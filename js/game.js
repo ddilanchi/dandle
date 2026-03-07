@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import * as CANNON from 'cannon-es';
-import { getRandomWord, isVerb, getWordTypes, isValidWord, initWordNet, getLoadProgress, isLoadDone } from './wordlist.js';
+import { getRandomWord, isVerb, getWordTypes, isValidWord, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
 // ── DOM ──
@@ -822,8 +822,6 @@ function startLevel() {
   cubes.length = 0;
   words.length = 0;
   animations.length = 0;
-  velocity.set(0, 0, 0);
-  angularVelocity.set(0, 0, 0);
   structureGroup.position.set(0, 0, 0);
   structureGroup.quaternion.identity();
   selectedCube = null;
@@ -1396,7 +1394,7 @@ let _fakeProgress = 0;
 (function pollProgress() {
   if (isLoadDone()) {
     introLoaderBar.style.setProperty('--progress', '100%');
-    introLoaderText.textContent = getLoadError()
+    introLoaderText.textContent = loadFailed()
       ? 'Playing without dictionary'
       : 'Dictionary ready!';
     setTimeout(() => {

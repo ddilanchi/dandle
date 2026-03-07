@@ -49,26 +49,6 @@ export function getRandomWord() {
   return STARTER_WORDS[Math.floor(Math.random() * STARTER_WORDS.length)];
 }
 
-// Words that are commonly both noun and verb — treat as noun (no force)
-const ALSO_NOUNS = new Set([
-  'BLOCK', 'BOLT', 'DART', 'BLAST', 'CRASH', 'BEAT', 'BANG', 'BLOW',
-  'SNAP', 'CRACK', 'BUMP', 'RAM', 'JAM', 'PACK', 'STREAM', 'FLOOD',
-  'SPLASH', 'SPRAY', 'BURST', 'SPARK', 'FLASH', 'BLAZE', 'STEAM',
-  'FIRE', 'DRILL', 'BORE', 'BITE', 'GULP', 'SIP', 'DRINK', 'SPIT',
-  'BARK', 'HOWL', 'HUM', 'CLAP', 'TAP', 'KNOCK', 'RING', 'BUZZ',
-  'CLICK', 'POP', 'BOOM', 'FORM', 'SHAPE', 'MOLD', 'CRAFT', 'FORGE',
-  'KNOT', 'WRAP', 'FOLD', 'BEND', 'SPRING', 'BOUND', 'HOP', 'SKIP',
-  'DANCE', 'WADE', 'SWIM', 'SURF', 'SAIL', 'ROW', 'PADDLE', 'LEAD',
-  'MARCH', 'STEP', 'STOMP', 'STAMP', 'POUND', 'CAST', 'PITCH',
-  'GUST', 'SWEEP', 'SWIRL', 'WHIRL', 'CHURN', 'STIR', 'JOLT',
-  'PASS', 'CUT', 'SLICE', 'CHOP', 'HACK', 'SAW', 'DIG', 'HUNT',
-  'RACE', 'SPEED', 'CHASE', 'CATCH', 'GRAB', 'STEAL', 'TAKE',
-  'SLIDE', 'DRIFT', 'FLOAT', 'CRUSH', 'ROAR', 'SCREAM', 'SHOUT',
-  'YELL', 'SHOOT', 'AIM', 'LAUNCH', 'LOB', 'TEAR', 'RIP',
-]);
-
 export function isVerb(word) {
-  const w = word.toUpperCase();
-  if (ALSO_NOUNS.has(w)) return false;
-  return VERBS.has(w);
+  return VERBS.has(word.toUpperCase());
 }

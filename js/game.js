@@ -759,6 +759,9 @@ function startLevel() {
 
   levelInfoEl.textContent = `Level ${currentLevel}`;
   hintEl.textContent = LEVEL_HINTS[currentLevel] || 'Reach the red zone!';
+
+  // Start music for this level
+  audio.startMusic(currentLevel);
 }
 
 // ── Click handling ──
@@ -1093,6 +1096,7 @@ function animate() {
   updateVerbTimers();
   updateLetterZones();
   updateDirectionArrow();
+  audio.setMusicIntensity(cubes.length);
   updatePhysics(dt);
   updateCamera();
   animateEndZone(time);

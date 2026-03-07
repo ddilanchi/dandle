@@ -4,7 +4,7 @@ import * as CANNON from 'cannon-es';
 import { getRandomWord, isVerb, getWordTypes, isValidWord, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v1.1.7';
+const VERSION = 'v1.2.0';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -158,42 +158,61 @@ applySettings(currentSettings);
 // ── Audio ──
 const audio = new AudioManager();
 
-// ── Tiled cube floor ──
+// ── Tiled cube floor (visual + physics) ──
 let floorMesh = null;
-const FLOOR_HALF = 20; // floor extends -20..+20
+let floorBody = null;
 const TILE_H = 1;
 
-
-function buildFloor() {
+// Build floor from an array of tile positions: [{ x, z }, ...]
+// If no tiles provided, builds a default 40x40 flat floor.
+function buildFloor(tiles) {
+  // Clean up old floor
   if (floorMesh) { scene.remove(floorMesh); floorMesh = null; }
+  if (floorBody) { world.removeBody(floorBody); floorBody = null; }
+
+  // Default: flat 40x40 grid
+  if (!tiles) {
+    tiles = [];
+    for (let xi = -20; xi < 20; xi++) {
+      for (let zi = -20; zi < 20; zi++) {
+        tiles.push({ x: xi, z: zi, y: 0 });
+      }
+    }
+  }
+
+  if (tiles.length === 0) return;
 
   const green = new THREE.Color(0x6aad7a);
   const beige = new THREE.Color(0xece0c0);
 
-  const tilePositions = [];
-  for (let xi = -FLOOR_HALF; xi < FLOOR_HALF; xi++) {
-    for (let zi = -FLOOR_HALF; zi < FLOOR_HALF; zi++) {
-      tilePositions.push({ tx: xi + 0.5, tz: zi + 0.5, xi, zi });
-    }
-  }
-
+  // Visual: InstancedMesh
   const geo = new THREE.BoxGeometry(1, TILE_H, 1);
   const mat = new THREE.MeshStandardMaterial();
-  floorMesh = new THREE.InstancedMesh(geo, mat, tilePositions.length);
+  floorMesh = new THREE.InstancedMesh(geo, mat, tiles.length);
   floorMesh.receiveShadow = true;
   const dummy = new THREE.Object3D();
-  tilePositions.forEach(({ tx, tz, xi, zi }, i) => {
-    dummy.position.set(tx, -TILE_H / 2, tz);
+  tiles.forEach((t, i) => {
+    const ty = (t.y || 0);
+    dummy.position.set(t.x + 0.5, ty - TILE_H / 2, t.z + 0.5);
     dummy.updateMatrix();
     floorMesh.setMatrixAt(i, dummy.matrix);
-    floorMesh.setColorAt(i, (xi + zi) % 2 === 0 ? green : beige);
+    floorMesh.setColorAt(i, (t.x + t.z) % 2 === 0 ? green : beige);
   });
   floorMesh.instanceMatrix.needsUpdate = true;
   if (floorMesh.instanceColor) floorMesh.instanceColor.needsUpdate = true;
   scene.add(floorMesh);
 
-  // Ensure ground plane is in world
-  if (!world.bodies.includes(groundBody)) world.addBody(groundBody);
+  // Physics: single static compound body with one Box per tile
+  floorBody = new CANNON.Body({ mass: 0, material: groundMat });
+  const half = new CANNON.Vec3(0.5, TILE_H / 2, 0.5);
+  for (const t of tiles) {
+    const ty = (t.y || 0);
+    floorBody.addShape(
+      new CANNON.Box(half),
+      new CANNON.Vec3(t.x + 0.5, ty - TILE_H / 2, t.z + 0.5)
+    );
+  }
+  world.addBody(floorBody);
 }
 
 
@@ -213,7 +232,7 @@ scene.add(structureGroup);
 
 const cubes = [];       // { letter, gx, gy, gz, mesh, wordIdx }
 const words = [];       // { text, dir, isVerb, arrowHelper }
-const VERB_FORCE = 1;  // continuous force magnitude
+const VERB_FORCE = 3;  // force per letter (applied each physics substep)
 const VERB_DELAY = 3;   // seconds before verb activates
 const GRAVITY = 20;
 
@@ -229,11 +248,25 @@ world.addContactMaterial(new CANNON.ContactMaterial(groundMat, structureMat, {
   friction: 0.6,
 }));
 
-// Static ground plane (infinite, stable collision)
-const groundBody = new CANNON.Body({ mass: 0, material: groundMat });
-groundBody.addShape(new CANNON.Plane());
-groundBody.quaternion.setFromEuler(-Math.PI / 2, 0, 0);
-world.addBody(groundBody);
+// Apply verb forces once per physics substep for consistency
+world.addEventListener('preStep', () => {
+  if (!structureBody || levelComplete) return;
+  const now = performance.now() / 1000;
+  for (const w of words) {
+    if (!w.isVerb || w._deleted || !w.thrustActive) continue;
+    const elapsed = now - w.thrustStart;
+    if (elapsed >= w.thrustDuration) continue;
+    const dv = dirToVec(w.dir);
+    const thrust = VERB_FORCE * w.text.length;
+    const worldForce = new CANNON.Vec3(dv.x * thrust, 0, dv.z * thrust);
+    const wordCubes = cubes.filter(c => c.wordIdx === words.indexOf(w));
+    if (wordCubes.length > 0) {
+      const mid = wordCubes[Math.floor(wordCubes.length / 2)];
+      const wp = cubeWorldPos(mid);
+      structureBody.applyForce(worldForce, new CANNON.Vec3(wp.x, wp.y, wp.z));
+    }
+  }
+});
 
 let structureBody = null;  // cannon rigid body for the whole structure
 let _comLocal = new THREE.Vector3(); // COM in structure local space
@@ -769,27 +802,15 @@ function updateVerbTimers() {
   for (const w of words) {
     if (!w.isVerb || w._deleted) continue;
 
-    // ── Rocket thrust phase (runs after activation) ──
+    // ── Rocket thrust phase (visual updates only — force applied in preStep) ──
     if (w.thrustActive) {
       const elapsed = now - w.thrustStart;
       if (elapsed >= w.thrustDuration) {
         w.thrustActive = false;
         if (w.arrowHelper) w.arrowHelper.visible = false;
-      } else if (structureBody) {
-        const dv = dirToVec(w.dir);
-        const thrust = VERB_FORCE * w.text.length;
-        const worldForce = new CANNON.Vec3(dv.x * thrust, 0, dv.z * thrust);
-        const wordCubes = cubes.filter(c => c.wordIdx === words.indexOf(w));
-        if (wordCubes.length > 0) {
-          const mid = wordCubes[Math.floor(wordCubes.length / 2)];
-          const wp = cubeWorldPos(mid);
-          const worldPt = new CANNON.Vec3(wp.x, wp.y, wp.z);
-          structureBody.applyForce(worldForce, worldPt);
-          if (w.arrowHelper) {
-            const pulse = 1 + 0.3 * Math.sin(now * 20);
-            w.arrowHelper.scale.set(pulse, pulse, pulse);
-          }
-        }
+      } else if (w.arrowHelper) {
+        const pulse = 1 + 0.3 * Math.sin(now * 20);
+        w.arrowHelper.scale.set(pulse, pulse, pulse);
       }
       continue;
     }

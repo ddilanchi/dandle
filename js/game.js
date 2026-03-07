@@ -152,7 +152,7 @@ function placeWord(text, startGx, startGz, dir, wordIdx) {
     placed.push(cube);
   }
 
-  const wordEntry = { text, dir, isVerb: verb, arrowHelper: null };
+  const wordEntry = { text, dir, isVerb: verb, length: text.length, arrowHelper: null };
 
   // Verb force arrow
   if (verb) {
@@ -412,8 +412,9 @@ function updatePhysics(dt) {
   for (const w of words) {
     if (!w.isVerb) continue;
     const dv = dirToVec(w.dir);
-    velocity.x += dv.x * VERB_FORCE * dt;
-    velocity.z += dv.z * VERB_FORCE * dt;
+    const force = VERB_FORCE * w.length;
+    velocity.x += dv.x * force * dt;
+    velocity.z += dv.z * force * dt;
   }
 
   // Friction

@@ -4,7 +4,7 @@ import * as CANNON from 'cannon-es';
 import { getRandomWord, isVerb, getWordTypes, isValidWord, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v1.2.3';
+const VERSION = 'v1.3.0';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -282,7 +282,9 @@ const letterZones = [];    // { x, z, size, type: '+'/'-', letter, mesh }
 // ── Animation queue ──
 const animations = [];  // { mesh, startTime, duration }
 const BLOCK_ANIM_DURATION = 0.25; // seconds per block scale-in
-const BLOCK_ANIM_STAGGER = 0.08; // delay between each block
+
+// ── Sequential letter placement queue ──
+let _placementQueue = null; // { letters: [...], index, wordEntry, onDone }
 
 // ── Cannon body management ──
 function createStructureBody() {
@@ -376,44 +378,11 @@ function makeLetterMesh(letter, isVerbCube) {
 }
 
 // ── Place a word in the structure ──
+// When animated=true, cubes are queued and placed one at a time.
+// When animated=false, all cubes placed instantly (used for starter word).
 function placeWord(text, startGx, startGz, dir, wordIdx, animated = false, startGy = 0, forceVerb = null) {
   const verb = forceVerb !== null ? forceVerb : isVerb(text);
-  const placed = [];
   const dirVec = dirToVec(dir);
-  const now = performance.now() / 1000;
-  let newBlockIndex = 0;
-
-  for (let i = 0; i < text.length; i++) {
-    const gx = startGx + dirVec.x * i;
-    const gy = startGy + (dirVec.y || 0) * i;
-    const gz = startGz + dirVec.z * i;
-    const existing = cubes.find(c => c.gx === gx && c.gy === gy && c.gz === gz);
-    if (existing) {
-      placed.push(existing);
-      continue;
-    }
-    const mesh = makeLetterMesh(text[i], verb);
-    mesh.position.set(gx, 0.5 + gy, gz);
-    structureGroup.add(mesh);
-    const cube = { letter: text[i], gx, gy, gz, mesh, wordIdx };
-    mesh.userData.cube = cube;
-    cubes.push(cube);
-    placed.push(cube);
-
-    if (animated) {
-      // Start at scale 0, animate to 1
-      mesh.scale.set(0, 0, 0);
-      const delay = newBlockIndex * BLOCK_ANIM_STAGGER;
-      animations.push({
-        mesh,
-        startTime: now + delay,
-        duration: BLOCK_ANIM_DURATION,
-        soundIndex: newBlockIndex,
-        soundPlayed: false,
-      });
-    }
-    newBlockIndex++;
-  }
 
   const wordEntry = {
     text, dir, isVerb: verb, length: text.length, arrowHelper: null,
@@ -422,23 +391,97 @@ function placeWord(text, startGx, startGz, dir, wordIdx, animated = false, start
     thrustActive: false, thrustStart: 0, thrustDuration: 0,
     timerSprite: null,
   };
+  words.push(wordEntry);
 
-  // Verb force arrow (delayed until animation finishes if animated)
-  if (verb) {
-    const arrowDir = new THREE.Vector3(dirVec.x, 0, dirVec.z).normalize();
-    const midIdx = Math.floor(text.length / 2);
-    const midCube = placed[midIdx];
-    const origin = new THREE.Vector3(midCube.gx, 1.2 + (midCube.gy || 0), midCube.gz);
-    const arrow = new THREE.ArrowHelper(arrowDir, origin, 1.5, 0xff2222, 0.4, 0.25);
-    // Hide arrow until verb timer activates it
-    arrow.visible = false;
-    structureGroup.add(arrow);
-    wordEntry.arrowHelper = arrow;
-    verbLegend.classList.remove('hidden');
+  // Build list of letters to place
+  const letters = [];
+  for (let i = 0; i < text.length; i++) {
+    const gx = startGx + dirVec.x * i;
+    const gy = startGy + (dirVec.y || 0) * i;
+    const gz = startGz + dirVec.z * i;
+    const existing = cubes.find(c => c.gx === gx && c.gy === gy && c.gz === gz);
+    if (existing) continue; // already placed, skip
+    letters.push({ letter: text[i], gx, gy, gz, verb, wordIdx });
   }
 
-  words.push(wordEntry);
-  return { placed, verb };
+  if (!animated) {
+    // Instant placement (starter word)
+    for (const l of letters) {
+      const mesh = makeLetterMesh(l.letter, l.verb);
+      mesh.position.set(l.gx, 0.5 + l.gy, l.gz);
+      structureGroup.add(mesh);
+      const cube = { letter: l.letter, gx: l.gx, gy: l.gy, gz: l.gz, mesh, wordIdx };
+      mesh.userData.cube = cube;
+      cubes.push(cube);
+    }
+    _addVerbArrow(wordEntry, dirVec, text, wordIdx);
+    return { verb };
+  }
+
+  // Animated: queue letters for sequential placement
+  _placementQueue = {
+    letters,
+    index: 0,
+    wordEntry,
+    dirVec,
+    text,
+    wordIdx,
+    currentAnim: null,
+  };
+  _placeNextLetter(); // start first one immediately
+  return { verb };
+}
+
+function _placeNextLetter() {
+  if (!_placementQueue) return;
+  const q = _placementQueue;
+  if (q.index >= q.letters.length) {
+    // All letters placed — add verb arrow, done
+    _addVerbArrow(q.wordEntry, q.dirVec, q.text, q.wordIdx);
+    _placementQueue = null;
+    return;
+  }
+
+  const l = q.letters[q.index];
+  const mesh = makeLetterMesh(l.letter, l.verb);
+  mesh.position.set(l.gx, 0.5 + l.gy, l.gz);
+  mesh.scale.set(0, 0, 0);
+  structureGroup.add(mesh);
+  const cube = { letter: l.letter, gx: l.gx, gy: l.gy, gz: l.gz, mesh, wordIdx: l.wordIdx };
+  mesh.userData.cube = cube;
+  cubes.push(cube);
+
+  const now = performance.now() / 1000;
+  audio.pop(q.index);
+  animations.push({
+    mesh,
+    startTime: now,
+    duration: BLOCK_ANIM_DURATION,
+    soundIndex: q.index,
+    soundPlayed: true, // already played
+    onComplete: () => {
+      // Rebuild physics with the new cube included
+      createStructureBody();
+      // Place next letter
+      q.index++;
+      _placeNextLetter();
+    },
+  });
+}
+
+function _addVerbArrow(wordEntry, dirVec, text, wordIdx) {
+  if (!wordEntry.isVerb) return;
+  const arrowDir = new THREE.Vector3(dirVec.x, 0, dirVec.z).normalize();
+  const midIdx = Math.floor(text.length / 2);
+  const wordCubes = cubes.filter(c => c.wordIdx === wordIdx);
+  const midCube = wordCubes[Math.min(midIdx, wordCubes.length - 1)];
+  if (!midCube) return;
+  const origin = new THREE.Vector3(midCube.gx, 1.2 + (midCube.gy || 0), midCube.gz);
+  const arrow = new THREE.ArrowHelper(arrowDir, origin, 1.5, 0xff2222, 0.4, 0.25);
+  arrow.visible = false;
+  structureGroup.add(arrow);
+  wordEntry.arrowHelper = arrow;
+  verbLegend.classList.remove('hidden');
 }
 
 // ── Tick animations ──
@@ -494,6 +537,7 @@ function updateAnimations() {
       if (elapsed >= a.duration) {
         a.mesh.scale.set(1, 1, 1);
         animations.splice(i, 1);
+        if (a.onComplete) a.onComplete();
       }
     }
   }
@@ -1195,11 +1239,8 @@ function submitWord() {
   const doPlace = (chosenType) => {
     const treatAsVerb = chosenType === 'VERB';
     const wordIdx = words.length;
-    const { placed } = placeWord(text, startGx, startGz, dir, wordIdx, true, startGy, treatAsVerb);
-    createStructureBody();
-
-    const newLetters = placed.filter(c => c.wordIdx === wordIdx).length;
-    lettersUsed += newLetters;
+    placeWord(text, startGx, startGz, dir, wordIdx, true, startGy, treatAsVerb);
+    lettersUsed += text.length;
 
     const typeColors = { VERB: '#ff4444', NOUN: '#4488ff', ADJ: '#44dd88' };
     if (treatAsVerb) {

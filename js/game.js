@@ -4,7 +4,7 @@ import * as CANNON from 'cannon-es';
 import { getRandomWord, isVerb, getWordTypes, isValidWord, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v1.4.0';
+const VERSION = 'v1.5.0';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -270,6 +270,7 @@ const wallBodies = [];     // static cannon bodies for level walls
 let endZone = null;
 let endZoneBox = null;
 let directionArrow = null; // blue arrow showing word placement direction
+let currentDir = 'x+'; // current build direction (controlled by Shift+IJKL)
 let currentLevel = 1;
 const levelObstacles = []; // meshes added per level (walls, platforms, zones)
 const letterZones = [];    // { x, z, size, type: '+'/'-', letter, mesh }
@@ -914,10 +915,10 @@ function updateVerbTimers() {
 // ── Direction indicator arrow ──
 function updateDirectionArrow() {
   if (!selectedCube) { removeDirectionArrow(); return; }
-  const dir = dirFromMouse(selectedCube.gx, selectedCube.gy, selectedCube.gz);
-  const dv = dirToVec(dir);
+  const dv = dirToVec(currentDir);
   const arrowDir = new THREE.Vector3(dv.x, dv.y || 0, dv.z).normalize();
-  // Use actual world position of the selected cube (accounts for physics rotation)
+  // Transform arrow direction from local to world space
+  arrowDir.applyQuaternion(structureGroup.quaternion);
   const origin = cubeWorldPos(selectedCube);
 
   if (directionArrow) {
@@ -926,8 +927,11 @@ function updateDirectionArrow() {
   } else {
     directionArrow = new THREE.ArrowHelper(arrowDir, origin, 2, 0x4488ff, 0.35, 0.2);
     _arrowAlwaysOnTop(directionArrow);
-    scene.add(directionArrow); // scene-level so position is in world space
+    scene.add(directionArrow);
   }
+
+  // Update transparency mask around the arrow
+  _updateArrowMask(origin, arrowDir);
 }
 
 function removeDirectionArrow() {
@@ -935,6 +939,83 @@ function removeDirectionArrow() {
     scene.remove(directionArrow);
     directionArrow = null;
   }
+  _removeArrowMask();
+}
+
+// ── Transparency mask: makes cubes near the arrow semi-transparent ──
+let _maskedMeshes = []; // { mesh, originalOpacity, originalTransparent }
+
+function _updateArrowMask(origin, arrowDir) {
+  // Restore previously masked meshes
+  _removeArrowMask();
+
+  if (!selectedCube) return;
+
+  // Make cubes that are near the arrow line semi-transparent
+  const arrowEnd = origin.clone().add(arrowDir.clone().multiplyScalar(2.5));
+  const arrowLine = new THREE.Line3(origin, arrowEnd);
+  const tmpPoint = new THREE.Vector3();
+
+  for (const c of cubes) {
+    if (c === selectedCube) continue;
+    const wp = cubeWorldPos(c);
+    arrowLine.closestPointToPoint(wp, true, tmpPoint);
+    const dist = wp.distanceTo(tmpPoint);
+    if (dist < 0.8) {
+      // This cube is near the arrow — make it transparent
+      const mats = Array.isArray(c.mesh.material) ? c.mesh.material : [c.mesh.material];
+      for (const mat of mats) {
+        _maskedMeshes.push({
+          mat,
+          origTransparent: mat.transparent,
+          origOpacity: mat.opacity,
+        });
+        mat.transparent = true;
+        mat.opacity = 0.2;
+      }
+    }
+  }
+}
+
+function _removeArrowMask() {
+  for (const entry of _maskedMeshes) {
+    entry.mat.transparent = entry.origTransparent;
+    entry.mat.opacity = entry.origOpacity;
+  }
+  _maskedMeshes = [];
+}
+
+// ── Keyboard navigation (Shift+WASD / Shift+IJKL) ──
+function _handleNavKey(key) {
+  if (!selectedCube) return false;
+
+  // Shift+WASD: move selection to adjacent cube
+  const moveMap = { 'W': { x: 0, z: -1 }, 'S': { x: 0, z: 1 }, 'A': { x: -1, z: 0 }, 'D': { x: 1, z: 0 } };
+  if (moveMap[key]) {
+    const m = moveMap[key];
+    const neighbor = cubes.find(c =>
+      c.gx === selectedCube.gx + m.x &&
+      c.gz === selectedCube.gz + m.z &&
+      (c.gy || 0) === (selectedCube.gy || 0)
+    );
+    if (neighbor) {
+      selectedCube = neighbor;
+      highlightCube(neighbor);
+      selectedInfoEl.textContent = `Selected: [${neighbor.letter}] at (${neighbor.gx}, ${neighbor.gz})`;
+      audio.select();
+    }
+    return true;
+  }
+
+  // Shift+IJKL: change build direction
+  const dirMap = { 'I': 'z-', 'K': 'z+', 'J': 'x-', 'L': 'x+' };
+  if (dirMap[key]) {
+    currentDir = dirMap[key];
+    audio.select();
+    return true;
+  }
+
+  return false;
 }
 
 // ── Message flash ──
@@ -1230,8 +1311,8 @@ function submitWord() {
     return;
   }
 
-  // Direction based on mouse position relative to selected cube (3D)
-  const dir = dirFromMouse(selectedCube.gx, selectedCube.gy, selectedCube.gz);
+  // Direction from keyboard (Shift+IJKL)
+  const dir = currentDir;
   const dv = dirToVec(dir);
 
   // Calculate starting position so that text[idx] aligns with selectedCube
@@ -1302,7 +1383,14 @@ function submitWord() {
 
 submitBtn.addEventListener('click', submitWord);
 wordInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') submitWord();
+  if (e.key === 'Enter') { submitWord(); return; }
+
+  // Shift+WASD: move selected cube, Shift+IJKL: change direction
+  if (e.shiftKey && _handleNavKey(e.key.toUpperCase())) {
+    e.preventDefault();
+    e.stopPropagation();
+    return;
+  }
   e.stopPropagation();
 });
 

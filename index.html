@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Dandle</title>
-  <link rel="stylesheet" href="css/style.css?v=1.4.0">
+  <link rel="stylesheet" href="css/style.css?v=1.5.0">
   <script type="importmap">
   {
     "imports": {
@@ -22,7 +22,7 @@
       <button id="restart-btn">Restart</button>
       <button id="settings-btn">&#9881;</button>
     </div>
-    <div id="hint">Click a letter cube, then type a word containing that letter</div>
+    <div id="hint">Click a cube, type a word. Shift+WASD: move selection. Shift+IJKL: change direction.</div>
     <div id="selected-info"></div>
     <div id="word-input-container" class="hidden">
       <input type="text" id="word-input" placeholder="Type a word..." autocomplete="off" />
@@ -104,6 +104,10 @@
           <span class="rule-icon">&#8594;</span>
           <span>Verbs <em>may</em> want to <strong>MOVE</strong></span>
         </div>
+        <div class="rule-item">
+          <span class="rule-icon">&#9000;</span>
+          <span>Shift+WASD: move selection | Shift+IJKL: aim direction</span>
+        </div>
       </div>
       <div id="intro-loader">
         <div id="intro-loader-bar"></div>
@@ -138,6 +142,6 @@
       }
     });
   </script>
-  <script type="module" src="js/game.js?v=1.4.0"></script>
+  <script type="module" src="js/game.js?v=1.5.0"></script>
 </body>
 </html>

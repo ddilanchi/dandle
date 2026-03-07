@@ -4,7 +4,7 @@ import * as CANNON from 'cannon-es';
 import { getRandomWord, isVerb, getWordTypes, isValidWord, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v1.5.1';
+const VERSION = 'v1.5.2';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -232,7 +232,7 @@ scene.add(structureGroup);
 
 const cubes = [];       // { letter, gx, gy, gz, mesh, wordIdx }
 const words = [];       // { text, dir, isVerb, arrowHelper }
-const VERB_FORCE = 10;  // force per letter (applied each physics substep)
+const VERB_FORCE = 25;  // force per letter (applied each physics substep)
 const VERB_DELAY = 3;   // seconds before verb activates
 const GRAVITY = 20;
 
@@ -1318,41 +1318,69 @@ function submitWord() {
     return;
   }
   const letter = selectedCube.letter;
-  const idx = text.indexOf(letter);
-  if (idx === -1) {
+
+  // Find ALL positions of the selected letter in the word
+  const allIdx = [];
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === letter) allIdx.push(i);
+  }
+  if (allIdx.length === 0) {
     showMessage(`Word must contain the letter [${letter}]`);
     audio.error();
     return;
   }
 
-  // Direction from keyboard (Shift+IJKL)
   const dir = currentDir;
   const dv = dirToVec(dir);
 
-  // Calculate starting position so that text[idx] aligns with selectedCube
+  // Try each possible anchor position — use the first one that works
+  let bestIdx = -1;
+  let bestError = null;
+
+  for (const idx of allIdx) {
+    const sx = selectedCube.gx - dv.x * idx;
+    const sy = (selectedCube.gy || 0) - (dv.y || 0) * idx;
+    const sz = selectedCube.gz - dv.z * idx;
+
+    // Check letter conflicts
+    let conflict = false;
+    for (let i = 0; i < text.length; i++) {
+      const gx = sx + dv.x * i;
+      const gy = sy + (dv.y || 0) * i;
+      const gz = sz + dv.z * i;
+      const existing = cubes.find(c => c.gx === gx && (c.gy || 0) === gy && c.gz === gz);
+      if (existing && existing.letter !== text[i]) { conflict = true; break; }
+    }
+    if (conflict) continue;
+
+    // Check adjacency
+    const err = validatePlacement(text, sx, sy, sz, dv);
+    if (!err) { bestIdx = idx; break; }
+    if (!bestError) bestError = err;
+  }
+
+  if (bestIdx === -1) {
+    showMessage(bestError || `Cannot place "${text}" in this direction`);
+    audio.error();
+    return;
+  }
+
+  const idx = bestIdx;
   const startGx = selectedCube.gx - dv.x * idx;
   const startGy = (selectedCube.gy || 0) - (dv.y || 0) * idx;
   const startGz = selectedCube.gz - dv.z * idx;
 
-  // Check for conflicts - letters at occupied positions must match
+  // Final conflict check (for error message — should pass since we validated above)
   for (let i = 0; i < text.length; i++) {
     const gx = startGx + dv.x * i;
     const gy = startGy + (dv.y || 0) * i;
     const gz = startGz + dv.z * i;
-    const existing = cubes.find(c => c.gx === gx && c.gy === gy && c.gz === gz);
+    const existing = cubes.find(c => c.gx === gx && (c.gy || 0) === gy && c.gz === gz);
     if (existing && existing.letter !== text[i]) {
       showMessage(`Conflict: [${text[i]}] overlaps [${existing.letter}]`);
       audio.error();
       return;
     }
-  }
-
-  // Validate crossword adjacency rules
-  const adjError = validatePlacement(text, startGx, startGy, startGz, dv);
-  if (adjError) {
-    showMessage(adjError);
-    audio.error();
-    return;
   }
 
   // Easter egg: DAN makes everything explode

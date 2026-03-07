@@ -4,7 +4,7 @@ import * as CANNON from 'cannon-es';
 import { getRandomWord, isVerb, getWordTypes, isValidWord, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v1.6.0';
+const VERSION = 'v1.6.1';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -232,7 +232,7 @@ scene.add(structureGroup);
 
 const cubes = [];       // { letter, gx, gy, gz, mesh, wordIdx }
 const words = [];       // { text, dir, isVerb, arrowHelper }
-const VERB_FORCE = 3;   // force per letter (applied each physics substep)
+const VERB_FORCE = 8;   // force per letter (applied each physics substep)
 const VERB_DELAY = 3;   // seconds before verb activates
 const GRAVITY = 20;
 
@@ -245,7 +245,7 @@ const groundMat = new CANNON.Material('ground');
 const structureMat = new CANNON.Material('structure');
 world.addContactMaterial(new CANNON.ContactMaterial(groundMat, structureMat, {
   restitution: 0.05,
-  friction: 0.12,
+  friction: 0.02,
 }));
 
 // Apply verb forces once per physics substep for consistency
@@ -1024,50 +1024,45 @@ function deleteWord(wordIdx) {
   if (w.arrowHelper) structureGroup.remove(w.arrowHelper);
   if (w.timerSprite) structureGroup.remove(w.timerSprite);
 
-  // Remove cubes that belong only to this word
-  const toRemove = [];
+  // Find cubes that belong ONLY to this word (not shared with another word)
+  const toDetach = [];
   for (let i = cubes.length - 1; i >= 0; i--) {
     const c = cubes[i];
     if (c.wordIdx !== wordIdx) continue;
-    const shared = cubes.some((other, oi) => oi !== i && other.gx === c.gx && other.gz === c.gz && (other.gy || 0) === (c.gy || 0));
+    const shared = cubes.some((other, oi) =>
+      oi !== i && other.gx === c.gx && other.gz === c.gz && (other.gy || 0) === (c.gy || 0)
+    );
     if (shared) continue;
-    toRemove.push(c);
+    toDetach.push(c);
   }
 
-  // Shrink-remove the deleted cubes
-  const now = performance.now() / 1000;
-  for (const c of toRemove) {
-    animations.push({
-      mesh: c.mesh,
-      startTime: now,
-      duration: 0.2,
-      soundIndex: 0,
-      soundPlayed: true,
-      isShrink: true,
-    });
+  // Turn deleted cubes into debris immediately
+  if (toDetach.length > 0) {
+    // Clear selection if it's being detached
+    if (selectedCube && toDetach.includes(selectedCube)) {
+      selectedCube = null;
+      clearHighlight();
+      removeDirectionArrow();
+      selectedInfoEl.textContent = '';
+      inputContainer.classList.add('hidden');
+    }
+    _spawnDebris(toDetach);
   }
 
-  // After shrink completes, check for disconnected components
-  setTimeout(() => {
-    if (cubes.length === 0) return;
-    const components = _findComponents(cubes);
-    if (components.length <= 1) {
-      createStructureBody();
-      return;
-    }
-
-    // Keep the largest component as main structure
-    components.sort((a, b) => b.length - a.length);
-    const mainCubes = components[0];
-
-    // Spawn debris for all smaller components
-    for (let i = 1; i < components.length; i++) {
-      _spawnDebris(components[i]);
-    }
-
-    // Rebuild main structure body with only mainCubes remaining
+  // Now check remaining cubes for disconnected components
+  if (cubes.length === 0) return;
+  const components = _findComponents(cubes);
+  if (components.length <= 1) {
     createStructureBody();
-  }, 250); // wait for shrink animation
+    return;
+  }
+
+  // Keep the largest component as main structure, detach the rest
+  components.sort((a, b) => b.length - a.length);
+  for (let i = 1; i < components.length; i++) {
+    _spawnDebris(components[i]);
+  }
+  createStructureBody();
 }
 
 function updateLetterZones() {
@@ -1608,31 +1603,97 @@ function validatePlacement(text, startGx, startGy, startGz, dv) {
 }
 
 // ── Word type spinner ──
+function _createSpinnerSprite(text, typeName) {
+  const c = document.createElement('canvas');
+  c.width = 256; c.height = 128;
+  const ctx = c.getContext('2d');
+  ctx.clearRect(0, 0, 256, 128);
+
+  // Background pill
+  ctx.fillStyle = 'rgba(0,0,0,0.7)';
+  ctx.beginPath();
+  ctx.roundRect(8, 8, 240, 112, 16);
+  ctx.fill();
+
+  // Word
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 28px Arial';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, 128, 36);
+
+  // Type with color
+  const typeColors = { VERB: '#ff6666', NOUN: '#66aaff', ADJ: '#66dd99' };
+  ctx.fillStyle = typeColors[typeName] || '#fff';
+  ctx.font = 'bold 40px Arial';
+  ctx.fillText(typeName, 128, 84);
+
+  const tex = new THREE.CanvasTexture(c);
+  const mat = new THREE.SpriteMaterial({ map: tex, transparent: true });
+  const sprite = new THREE.Sprite(mat);
+  sprite.scale.set(3, 1.5, 1);
+  sprite.userData.canvas = c;
+  sprite.userData.texture = tex;
+  return sprite;
+}
+
+function _updateSpinnerSprite(sprite, word, typeName) {
+  const c = sprite.userData.canvas;
+  const ctx = c.getContext('2d');
+  ctx.clearRect(0, 0, 256, 128);
+
+  ctx.fillStyle = 'rgba(0,0,0,0.7)';
+  ctx.beginPath();
+  ctx.roundRect(8, 8, 240, 112, 16);
+  ctx.fill();
+
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 28px Arial';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(word, 128, 36);
+
+  const typeColors = { VERB: '#ff6666', NOUN: '#66aaff', ADJ: '#66dd99' };
+  ctx.fillStyle = typeColors[typeName] || '#fff';
+  ctx.font = 'bold 40px Arial';
+  ctx.fillText(typeName, 128, 84);
+
+  sprite.userData.texture.needsUpdate = true;
+}
+
 function spinWordType(word, types) {
   return new Promise((resolve) => {
     if (types.length === 1) {
       resolve(types[0]);
       return;
     }
-    spinnerWord.textContent = word;
-    typeSpinner.classList.remove('hidden');
+
     const finalType = types[Math.floor(Math.random() * types.length)];
+
+    // Create 3D sprite above structure
+    const sprite = _createSpinnerSprite(word, types[0]);
+    // Position above selected cube or structure center
+    if (selectedCube) {
+      sprite.position.set(selectedCube.gx, 3.5 + (selectedCube.gy || 0), selectedCube.gz);
+    } else {
+      sprite.position.set(0, 3.5, 0);
+    }
+    structureGroup.add(sprite);
+
     let spins = 0;
     const totalSpins = 12 + Math.floor(Math.random() * 6);
     const tick = () => {
       const t = types[spins % types.length];
-      spinnerType.textContent = t;
-      spinnerType.className = t.toLowerCase();
+      _updateSpinnerSprite(sprite, word, t);
       spins++;
       if (spins >= totalSpins) {
-        spinnerType.textContent = finalType;
-        spinnerType.className = finalType.toLowerCase();
+        _updateSpinnerSprite(sprite, word, finalType);
         setTimeout(() => {
-          typeSpinner.classList.add('hidden');
+          structureGroup.remove(sprite);
           resolve(finalType);
         }, 600);
       } else {
-        setTimeout(tick, 80 + spins * 8); // decelerates
+        setTimeout(tick, 80 + spins * 8);
       }
     };
     tick();
@@ -1982,6 +2043,17 @@ window.addEventListener('keydown', (e) => {
       audio.stopMusic();
     } else {
       audio.startMusic(currentLevel);
+    }
+  }
+});
+
+// ── Global Shift+WASD/QE/Space handler (works even without input focus) ──
+window.addEventListener('keydown', (e) => {
+  if (!e.shiftKey || levelComplete || paused || _placementQueue) return;
+  const key = e.key.toUpperCase();
+  if ('WASDEQ '.includes(key) || key === ' ') {
+    if (_handleNavKey(key === ' ' ? ' ' : key)) {
+      e.preventDefault();
     }
   }
 });

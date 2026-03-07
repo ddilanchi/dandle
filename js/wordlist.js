@@ -66,11 +66,47 @@ export async function initWordNet() {
   await _loadPromise;
 }
 
+// Try to find the base form of a word by stripping common suffixes
+function _findBase(w) {
+  if (_wordnet[w]) return w;
+  // Plurals: TOYS→TOY, BOXES→BOX, CHURCHES→CHURCH, BABIES→BABY
+  if (w.endsWith('IES') && w.length > 4) { const b = w.slice(0, -3) + 'Y'; if (_wordnet[b]) return b; }
+  if (w.endsWith('SES') || w.endsWith('XES') || w.endsWith('ZES') || w.endsWith('CHES') || w.endsWith('SHES')) {
+    const b = w.endsWith('CHES') || w.endsWith('SHES') ? w.slice(0, -2) : w.slice(0, -2);
+    if (_wordnet[b]) return b;
+    const b2 = w.slice(0, -1); if (_wordnet[b2]) return b2;
+  }
+  if (w.endsWith('S') && !w.endsWith('SS')) { const b = w.slice(0, -1); if (_wordnet[b]) return b; }
+  // Past tense / -ing: JUMPED→JUMP, RUNNING→RUN
+  if (w.endsWith('ING')) {
+    const b = w.slice(0, -3); if (_wordnet[b]) return b;
+    const b2 = b + 'E'; if (_wordnet[b2]) return b2; // DANCING→DANCE
+    if (b.length > 1 && b[b.length - 1] === b[b.length - 2]) { const b3 = b.slice(0, -1); if (_wordnet[b3]) return b3; } // RUNNING→RUN
+  }
+  if (w.endsWith('ED')) {
+    const b = w.slice(0, -2); if (_wordnet[b]) return b;
+    const b2 = w.slice(0, -1); if (_wordnet[b2]) return b2; // DANCED→DANCE
+    if (b.length > 1 && b[b.length - 1] === b[b.length - 2]) { const b3 = b.slice(0, -1); if (_wordnet[b3]) return b3; } // STOPPED→STOP
+    const b4 = w.slice(0, -3); if (w.endsWith('IED') && _wordnet[b4 + 'Y']) return b4 + 'Y'; // CARRIED→CARRY
+  }
+  // Comparatives: BIGGER→BIG, FASTER→FAST
+  if (w.endsWith('ER')) {
+    const b = w.slice(0, -2); if (_wordnet[b]) return b;
+    const b2 = w.slice(0, -1); if (_wordnet[b2]) return b2;
+    if (b.length > 1 && b[b.length - 1] === b[b.length - 2]) { const b3 = b.slice(0, -1); if (_wordnet[b3]) return b3; }
+  }
+  if (w.endsWith('EST')) {
+    const b = w.slice(0, -3); if (_wordnet[b]) return b;
+    const b2 = w.slice(0, -2); if (_wordnet[b2]) return b2;
+  }
+  if (w.endsWith('LY') && w.length > 4) { const b = w.slice(0, -2); if (_wordnet[b]) return b; }
+  return null;
+}
+
 export function isValidWord(word) {
   if (!/^[A-Z]{2,}$/i.test(word)) return false;
   const w = word.toUpperCase();
-  if (_wordnet) return !!_wordnet[w];
-  // WordNet not loaded — accept all letter-only words as fallback
+  if (_wordnet) return !!_wordnet[w] || !!_findBase(w);
   return true;
 }
 
@@ -78,8 +114,9 @@ export function getWordTypes(word) {
   const w = word.toUpperCase();
 
   // WordNet takes precedence when loaded
-  if (_wordnet && _wordnet[w]) {
-    const tags = _wordnet[w];
+  const key = _wordnet ? (_wordnet[w] ? w : _findBase(w)) : null;
+  if (key && _wordnet[key]) {
+    const tags = _wordnet[key];
     const types = [];
     if (tags.includes('n')) types.push('NOUN');
     if (tags.includes('v')) types.push('VERB');
@@ -96,7 +133,8 @@ export function getWordTypes(word) {
 
 export function isVerb(word) {
   const w = word.toUpperCase();
-  if (_wordnet && _wordnet[w]) return _wordnet[w].includes('v');
+  const key = _wordnet ? (_wordnet[w] ? w : _findBase(w)) : null;
+  if (key && _wordnet[key]) return _wordnet[key].includes('v');
   return VERBS.has(w);
 }
 

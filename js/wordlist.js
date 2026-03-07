@@ -3,17 +3,15 @@
 // Built by: node scripts/build-wordnet.js
 
 let _wordnet = null;
+// Start fetching immediately on module load — runs in background while user reads intro
+const _loadPromise = fetch('./wordnet-data.json')
+  .then(r => r.json())
+  .then(data => { _wordnet = data; })
+  .catch(() => { _wordnet = {}; }); // fail open
 
-async function loadWordNet() {
-  if (_wordnet) return _wordnet;
-  const res = await fetch('./wordnet-data.json');
-  _wordnet = await res.json();
-  return _wordnet;
-}
-
-// Call this once at startup — await it before the game starts
+// Awaiting this resolves instantly if already loaded
 export async function initWordNet() {
-  await loadWordNet();
+  await _loadPromise;
 }
 
 // Returns true if the word exists in WordNet

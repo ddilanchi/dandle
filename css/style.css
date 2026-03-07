@@ -485,6 +485,14 @@ body {
   display: none;
 }
 
+#intro-version {
+  margin-top: 24px;
+  font-size: 11px;
+  letter-spacing: 2px;
+  color: rgba(212, 197, 160, 0.2);
+  font-family: monospace;
+}
+
 @keyframes blink {
   0%, 100% { opacity: 0.3; }
   50% { opacity: 0.9; }

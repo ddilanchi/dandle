@@ -4,7 +4,7 @@ import * as CANNON from 'cannon-es';
 import { getRandomWord, isVerb, getWordTypes, isValidWord, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v1.0.8';
+const VERSION = 'v1.0.9';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -167,8 +167,8 @@ function buildFloor(pits = []) {
   if (floorMesh) { scene.remove(floorMesh); floorMesh = null; }
   if (groundBody) { world.removeBody(groundBody); groundBody = null; }
 
-  const green = new THREE.Color(0x4a7c59);
-  const beige = new THREE.Color(0xd4c5a0);
+  const green = new THREE.Color(0x6aad7a);
+  const beige = new THREE.Color(0xece0c0);
 
   // Collect tile positions, skipping pit areas
   const tilePositions = [];
@@ -253,8 +253,8 @@ world.allowSleep = false;
 const groundMat = new CANNON.Material('ground');
 const structureMat = new CANNON.Material('structure');
 world.addContactMaterial(new CANNON.ContactMaterial(groundMat, structureMat, {
-  restitution: 0.25,
-  friction: 0.4,
+  restitution: 0.05,
+  friction: 0.6,
 }));
 
 let groundBody = null; // rebuilt per level
@@ -278,7 +278,8 @@ const BLOCK_ANIM_STAGGER = 0.08; // delay between each block
 
 // ── Cannon body management ──
 function createStructureBody() {
-  if (structureBody) world.removeBody(structureBody);
+  const oldBody = structureBody;
+  if (oldBody) world.removeBody(oldBody);
   structureBody = null;
   if (cubes.length === 0) return;
 
@@ -307,6 +308,8 @@ function createStructureBody() {
   const comWorld = _comLocal.clone()
     .applyQuaternion(structureGroup.quaternion)
     .add(structureGroup.position);
+  // Ensure structure doesn't clip below ground
+  comWorld.y = Math.max(comWorld.y, cy);
   body.position.set(comWorld.x, comWorld.y, comWorld.z);
   body.quaternion.set(
     structureGroup.quaternion.x, structureGroup.quaternion.y,
@@ -314,9 +317,9 @@ function createStructureBody() {
   );
 
   // Preserve momentum when rebuilding
-  if (structureBody) {
-    body.velocity.copy(structureBody.velocity);
-    body.angularVelocity.copy(structureBody.angularVelocity);
+  if (oldBody) {
+    body.velocity.copy(oldBody.velocity);
+    body.angularVelocity.copy(oldBody.angularVelocity);
   }
 
   world.addBody(body);
@@ -1357,6 +1360,7 @@ function syncSettingsUI() {
 
 settingsBtn.addEventListener('click', () => {
   syncSettingsUI();
+  settingsScreen.style.display = '';
   settingsScreen.classList.remove('hidden');
 });
 settingsClose.addEventListener('click', () => settingsScreen.classList.add('hidden'));

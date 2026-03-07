@@ -70,8 +70,8 @@ export function isValidWord(word) {
   if (!/^[A-Z]{2,}$/i.test(word)) return false;
   const w = word.toUpperCase();
   if (_wordnet) return !!_wordnet[w];
-  // WordNet not loaded — accept words from hardcoded sets or starter words
-  return VERBS.has(w) || ADJECTIVES.has(w) || STARTER_WORDS.includes(w);
+  // WordNet not loaded — accept all letter-only words as fallback
+  return true;
 }
 
 export function getWordTypes(word) {

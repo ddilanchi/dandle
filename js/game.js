@@ -1007,11 +1007,6 @@ function submitWord() {
     audio.error();
     return;
   }
-  if (!isValidWord(text)) {
-    showMessage(`"${text}" is not a valid word`);
-    audio.error();
-    return;
-  }
 
   const letter = selectedCube.letter;
   const idx = text.indexOf(letter);

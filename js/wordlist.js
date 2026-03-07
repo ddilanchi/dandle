@@ -32,8 +32,10 @@ export async function initWordNet() {
 }
 
 export function isValidWord(word) {
-  if (!_wordnet) return true; // permissive while loading
-  return word.toUpperCase() in _wordnet;
+  if (!_wordnet || _loadError) return true; // permissive if not loaded or failed
+  const w = word.toUpperCase();
+  if (!(w in _wordnet)) return true; // WordNet doesn't have everything — be permissive
+  return true; // always allow, use WordNet only for POS tagging
 }
 
 export function getWordTypes(word) {

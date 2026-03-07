@@ -29,6 +29,13 @@ body {
   padding: 16px;
 }
 
+#top-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  pointer-events: all;
+}
+
 #level-info {
   background: rgba(0, 0, 0, 0.6);
   color: #fff;
@@ -38,6 +45,22 @@ body {
   font-weight: bold;
   letter-spacing: 2px;
   text-transform: uppercase;
+}
+
+#restart-btn {
+  background: rgba(0, 0, 0, 0.6);
+  color: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+#restart-btn:hover {
+  background: rgba(255, 255, 255, 0.15);
+  color: #fff;
 }
 
 #hint {

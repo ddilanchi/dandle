@@ -5,6 +5,7 @@ import { AudioManager } from './audio.js';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
+const restartBtn = document.getElementById('restart-btn');
 const levelInfoEl = document.getElementById('level-info');
 const hintEl = document.getElementById('hint');
 const selectedInfoEl = document.getElementById('selected-info');
@@ -810,6 +811,54 @@ canvas.addEventListener('pointerup', (e) => {
   }
 });
 
+// ── Crossword adjacency validation ──
+// Ensures no new cube is placed adjacent to existing cubes unless it's
+// a proper intersection (shared position with matching letter).
+// Prevents parallel stacking and random letter adjacencies.
+function validatePlacement(text, startGx, startGy, startGz, dv) {
+  // Determine the perpendicular axes based on word direction
+  const perpAxes = [];
+  if (dv.x === 0) perpAxes.push({ x: 1, y: 0, z: 0 }, { x: -1, y: 0, z: 0 });
+  if (dv.z === 0) perpAxes.push({ x: 0, y: 0, z: 1 }, { x: 0, y: 0, z: -1 });
+  if ((dv.y || 0) === 0) perpAxes.push({ x: 0, y: 1, z: 0 }, { x: 0, y: -1, z: 0 });
+
+  // Also check along the word direction beyond the word ends
+  const beforeGx = startGx - dv.x;
+  const beforeGy = startGy - (dv.y || 0);
+  const beforeGz = startGz - dv.z;
+  const afterGx = startGx + dv.x * text.length;
+  const afterGy = startGy + (dv.y || 0) * text.length;
+  const afterGz = startGz + dv.z * text.length;
+
+  // Check if there's an existing cube just before or after the word
+  const cubeBefore = cubes.find(c => c.gx === beforeGx && c.gy === beforeGy && c.gz === beforeGz);
+  const cubeAfter = cubes.find(c => c.gx === afterGx && c.gy === afterGy && c.gz === afterGz);
+  if (cubeBefore) return `Word would extend from an existing [${cubeBefore.letter}] — invalid adjacency`;
+  if (cubeAfter) return `Word would extend into an existing [${cubeAfter.letter}] — invalid adjacency`;
+
+  for (let i = 0; i < text.length; i++) {
+    const gx = startGx + dv.x * i;
+    const gy = startGy + (dv.y || 0) * i;
+    const gz = startGz + dv.z * i;
+
+    // Skip positions where a cube already exists (intersection)
+    const existing = cubes.find(c => c.gx === gx && c.gy === gy && c.gz === gz);
+    if (existing) continue;
+
+    // For each new cube, check perpendicular neighbors
+    for (const perp of perpAxes) {
+      const nx = gx + perp.x;
+      const ny = gy + perp.y;
+      const nz = gz + perp.z;
+      const neighbor = cubes.find(c => c.gx === nx && c.gy === ny && c.gz === nz);
+      if (neighbor) {
+        return `[${text[i]}] would be adjacent to [${neighbor.letter}] — no valid cross-word`;
+      }
+    }
+  }
+  return null; // valid
+}
+
 // ── Word submission ──
 function submitWord() {
   if (!selectedCube || levelComplete) return;
@@ -855,6 +904,14 @@ function submitWord() {
     }
   }
 
+  // Validate crossword adjacency rules
+  const adjError = validatePlacement(text, startGx, startGy, startGz, dv);
+  if (adjError) {
+    showMessage(adjError);
+    audio.error();
+    return;
+  }
+
   const wordIdx = words.length;
   const { placed, verb } = placeWord(text, startGx, startGz, dir, wordIdx, true, startGy);
 
@@ -881,6 +938,11 @@ submitBtn.addEventListener('click', submitWord);
 wordInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') submitWord();
   e.stopPropagation();
+});
+
+// ── Restart button ──
+restartBtn.addEventListener('click', () => {
+  startLevel();
 });
 
 // ── Level complete handler ──

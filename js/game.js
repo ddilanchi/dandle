@@ -4,7 +4,7 @@ import * as CANNON from 'cannon-es';
 import { getRandomWord, isVerb, getWordTypes, isValidWord, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v1.3.2';
+const VERSION = 'v1.3.3';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -583,26 +583,31 @@ function dirToVec(dir) {
 
 // ── Get 3D direction from selected cube toward mouse ──
 function dirFromMouse(cubeGx, cubeGy, cubeGz) {
-  // Use full group transform (position + rotation) to get actual world pos
+  // Get cube world position
   const local = new THREE.Vector3(cubeGx, 0.5 + (cubeGy || 0), cubeGz);
   local.applyQuaternion(structureGroup.quaternion);
   local.add(structureGroup.position);
-  const wx = local.x, wy = local.y, wz = local.z;
 
   // Cast ray from mouse and find the closest point on the ray to the cube center
   raycaster.setFromCamera(mouse, camera);
-  const cubeWorld = new THREE.Vector3(wx, wy, wz);
   const closestPoint = new THREE.Vector3();
-  raycaster.ray.closestPointToPoint(cubeWorld, closestPoint);
+  raycaster.ray.closestPointToPoint(local, closestPoint);
 
-  const dx = closestPoint.x - wx;
-  const dy = closestPoint.y - wy;
-  const dz = closestPoint.z - wz;
+  // Get world-space delta
+  const worldDelta = closestPoint.clone().sub(local);
+
+  // Transform delta back into the structure's local space
+  const invQ = structureGroup.quaternion.clone().invert();
+  worldDelta.applyQuaternion(invQ);
+
+  const dx = worldDelta.x;
+  const dy = worldDelta.y;
+  const dz = worldDelta.z;
   const ax = Math.abs(dx);
   const ay = Math.abs(dy);
   const az = Math.abs(dz);
 
-  // Pick the dominant axis
+  // Pick the dominant local axis
   if (ay >= ax && ay >= az) {
     return dy >= 0 ? 'y+' : 'y-';
   }

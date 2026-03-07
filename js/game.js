@@ -97,7 +97,7 @@ let levelFalling = false;
 let structureGroup = new THREE.Group();
 scene.add(structureGroup);
 
-const cubes = [];       // { letter, gx, gz, mesh, wordIdx }
+const cubes = [];       // { letter, gx, gy, gz, mesh, wordIdx }
 const words = [];       // { text, dir, isVerb, arrowHelper }
 const velocity = new THREE.Vector3();
 const FRICTION = 0.97;
@@ -110,6 +110,7 @@ let endZoneY = 0; // y position of end zone (for elevated goals)
 let directionArrow = null; // blue arrow showing word placement direction
 let currentLevel = 1;
 const levelObstacles = []; // meshes added per level (walls, pits, platforms)
+const letterZones = [];    // { x, z, size, type: '+'/'-', letter, mesh }
 
 // ── Animation queue ──
 const animations = [];  // { mesh, startTime, duration }
@@ -144,7 +145,7 @@ function makeLetterMesh(letter, isVerbCube) {
 }
 
 // ── Place a word in the structure ──
-function placeWord(text, startGx, startGz, dir, wordIdx, animated = false) {
+function placeWord(text, startGx, startGz, dir, wordIdx, animated = false, startGy = 0) {
   const verb = isVerb(text);
   const placed = [];
   const dirVec = dirToVec(dir);
@@ -153,16 +154,17 @@ function placeWord(text, startGx, startGz, dir, wordIdx, animated = false) {
 
   for (let i = 0; i < text.length; i++) {
     const gx = startGx + dirVec.x * i;
+    const gy = startGy + (dirVec.y || 0) * i;
     const gz = startGz + dirVec.z * i;
-    const existing = cubes.find(c => c.gx === gx && c.gz === gz);
+    const existing = cubes.find(c => c.gx === gx && c.gy === gy && c.gz === gz);
     if (existing) {
       placed.push(existing);
       continue;
     }
     const mesh = makeLetterMesh(text[i], verb);
-    mesh.position.set(gx, 0.5, gz);
+    mesh.position.set(gx, 0.5 + gy, gz);
     structureGroup.add(mesh);
-    const cube = { letter: text[i], gx, gz, mesh, wordIdx };
+    const cube = { letter: text[i], gx, gy, gz, mesh, wordIdx };
     mesh.userData.cube = cube;
     cubes.push(cube);
     placed.push(cube);
@@ -194,7 +196,7 @@ function placeWord(text, startGx, startGz, dir, wordIdx, animated = false) {
     const arrowDir = new THREE.Vector3(dirVec.x, 0, dirVec.z).normalize();
     const midIdx = Math.floor(text.length / 2);
     const midCube = placed[midIdx];
-    const origin = new THREE.Vector3(midCube.gx, 1.2, midCube.gz);
+    const origin = new THREE.Vector3(midCube.gx, 1.2 + (midCube.gy || 0), midCube.gz);
     const arrow = new THREE.ArrowHelper(arrowDir, origin, 1.5, 0xff2222, 0.4, 0.25);
     // Hide arrow until verb timer activates it
     arrow.visible = false;
@@ -226,7 +228,7 @@ function updateAnimations() {
       continue;
     }
 
-    // Block scale-in
+    // Block scale-in or shrink-out
     if (now < a.startTime) continue;
     const elapsed = now - a.startTime;
     let t = Math.min(elapsed / a.duration, 1);
@@ -237,38 +239,68 @@ function updateAnimations() {
       a.soundPlayed = true;
     }
 
-    // Overshoot easing for a bouncy pop feel
-    const overshoot = 1.4;
-    t = t < 1
-      ? 1 - Math.pow(1 - t, 3) * (1 + overshoot * (1 - t))
-      : 1;
+    if (a.isShrink) {
+      // Shrink out
+      const s = 1 - t;
+      a.mesh.scale.set(s, s, s);
+      if (t >= 1) {
+        structureGroup.remove(a.mesh);
+        // Remove from cubes array
+        const ci = cubes.findIndex(c => c.mesh === a.mesh);
+        if (ci !== -1) cubes.splice(ci, 1);
+        animations.splice(i, 1);
+      }
+    } else {
+      // Overshoot easing for a bouncy pop feel
+      const overshoot = 1.4;
+      t = t < 1
+        ? 1 - Math.pow(1 - t, 3) * (1 + overshoot * (1 - t))
+        : 1;
 
-    a.mesh.scale.set(t, t, t);
+      a.mesh.scale.set(t, t, t);
 
-    if (elapsed >= a.duration) {
-      a.mesh.scale.set(1, 1, 1);
-      animations.splice(i, 1);
+      if (elapsed >= a.duration) {
+        a.mesh.scale.set(1, 1, 1);
+        animations.splice(i, 1);
+      }
     }
   }
 }
 
 function dirToVec(dir) {
   switch (dir) {
-    case 'x+': return { x: 1, z: 0 };
-    case 'x-': return { x: -1, z: 0 };
-    case 'z+': return { x: 0, z: 1 };
-    case 'z-': return { x: 0, z: -1 };
+    case 'x+': return { x: 1, y: 0, z: 0 };
+    case 'x-': return { x: -1, y: 0, z: 0 };
+    case 'z+': return { x: 0, y: 0, z: 1 };
+    case 'z-': return { x: 0, y: 0, z: -1 };
+    case 'y+': return { x: 0, y: 1, z: 0 };
+    case 'y-': return { x: 0, y: -1, z: 0 };
   }
 }
 
-// ── Get cardinal direction from selected cube toward mouse on ground ──
-function dirFromMouse(cubeGx, cubeGz) {
-  // Get cube world position (account for structure movement)
+// ── Get 3D direction from selected cube toward mouse ──
+function dirFromMouse(cubeGx, cubeGy, cubeGz) {
   const wx = cubeGx + structureGroup.position.x;
+  const wy = (cubeGy || 0.5) + structureGroup.position.y;
   const wz = cubeGz + structureGroup.position.z;
-  const dx = lastMouseWorld.x - wx;
-  const dz = lastMouseWorld.z - wz;
-  // Pick the dominant axis
+
+  // Raycast from mouse into scene to get a 3D target point
+  raycaster.setFromCamera(mouse, camera);
+  // Intersect ground plane for XZ, but also check vertical via camera angle
+  const target = new THREE.Vector3();
+  raycaster.ray.intersectPlane(groundPlane, target);
+
+  const dx = target.x - wx;
+  const dz = target.z - wz;
+
+  // Check if camera is looking steeply down - if mouse is very close to the cube
+  // in XZ, interpret as vertical (Y+)
+  const xzDist = Math.sqrt(dx * dx + dz * dz);
+  if (xzDist < 1.5) {
+    return 'y+';
+  }
+
+  // Pick the dominant horizontal axis
   if (Math.abs(dx) >= Math.abs(dz)) {
     return dx >= 0 ? 'x+' : 'x-';
   }
@@ -351,6 +383,135 @@ function addPit(x, z, w, d) {
   scene.add(line);
   levelObstacles.push(line);
   return pit;
+}
+
+// ── Letter zones ──
+function addLetterZone(cx, cz, size, type, letter) {
+  const c = document.createElement('canvas');
+  c.width = 256;
+  c.height = 256;
+  const ctx = c.getContext('2d');
+
+  // Background
+  if (type === '-') {
+    ctx.fillStyle = 'rgba(180, 60, 60, 0.55)';
+  } else {
+    ctx.fillStyle = 'rgba(50, 120, 180, 0.55)';
+  }
+  ctx.fillRect(0, 0, 256, 256);
+
+  // Border
+  ctx.strokeStyle = type === '-' ? '#aa3333' : '#3366aa';
+  ctx.lineWidth = 6;
+  ctx.strokeRect(3, 3, 250, 250);
+
+  // Symbol and letter
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 120px Arial';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(`${type}${letter}`, 128, 128);
+
+  const tex = new THREE.CanvasTexture(c);
+  const geo = new THREE.PlaneGeometry(size, size);
+  const mat = new THREE.MeshStandardMaterial({
+    map: tex, transparent: true, opacity: 0.7, side: THREE.DoubleSide,
+  });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.rotation.x = -Math.PI / 2;
+  mesh.position.set(cx, 0.02, cz);
+  mesh.receiveShadow = true;
+  scene.add(mesh);
+  levelObstacles.push(mesh);
+
+  const zone = { x: cx, z: cz, size, type, letter, mesh };
+  letterZones.push(zone);
+  return zone;
+}
+
+function getZoneAt(wx, wz) {
+  for (const z of letterZones) {
+    const half = z.size / 2;
+    if (Math.abs(wx - z.x) < half && Math.abs(wz - z.z) < half) {
+      return z;
+    }
+  }
+  return null;
+}
+
+function deleteWord(wordIdx) {
+  const w = words[wordIdx];
+  if (!w || w._deleted) return;
+  w._deleted = true;
+
+  // Remove arrow
+  if (w.arrowHelper) {
+    structureGroup.remove(w.arrowHelper);
+  }
+  // Remove timer sprite
+  if (w.timerSprite) {
+    structureGroup.remove(w.timerSprite);
+  }
+
+  // Shrink-remove cubes that belong only to this word
+  const now = performance.now() / 1000;
+  for (let i = cubes.length - 1; i >= 0; i--) {
+    const c = cubes[i];
+    if (c.wordIdx !== wordIdx) continue;
+
+    // Check if another word also uses this position
+    const shared = cubes.some(
+      (other, oi) => oi !== i && other.gx === c.gx && other.gz === c.gz
+    );
+    if (shared) continue;
+
+    // Shrink animation then remove
+    animations.push({
+      mesh: c.mesh,
+      startTime: now,
+      duration: 0.2,
+      soundIndex: 0,
+      soundPlayed: true, // don't play pop
+      isShrink: true,
+      cubeIndex: i,
+    });
+  }
+}
+
+function updateLetterZones() {
+  if (letterZones.length === 0 || levelComplete) return;
+  const sp = structureGroup.position;
+
+  for (let wi = 0; wi < words.length; wi++) {
+    const w = words[wi];
+    if (w._deleted) continue;
+
+    // Get the word's cubes and check which zones they overlap
+    const wordCubes = cubes.filter(c => c.wordIdx === wi);
+    for (const c of wordCubes) {
+      const wx = c.gx + sp.x;
+      const wz = c.gz + sp.z;
+      const zone = getZoneAt(wx, wz);
+      if (!zone) continue;
+
+      const wordHasLetter = w.text.includes(zone.letter);
+
+      if (zone.type === '-' && wordHasLetter) {
+        // Minus zone: delete words containing this letter
+        deleteWord(wi);
+        audio.collision();
+        showMessage(`"${w.text}" dissolved! Contains [${zone.letter}] in a -${zone.letter} zone`, '#ff6b6b');
+        break;
+      }
+      if (zone.type === '+' && !wordHasLetter) {
+        // Plus zone: delete words NOT containing this letter
+        deleteWord(wi);
+        audio.collision();
+        showMessage(`"${w.text}" dissolved! Missing [${zone.letter}] in a +${zone.letter} zone`, '#ff6b6b');
+        break;
+      }
+    }
+  }
 }
 
 // ── Selection highlight ──
@@ -457,10 +618,15 @@ function updateDirectionArrow() {
     removeDirectionArrow();
     return;
   }
-  const dir = dirFromMouse(selectedCube.gx, selectedCube.gz);
+  const dir = dirFromMouse(selectedCube.gx, selectedCube.gy, selectedCube.gz);
   const dv = dirToVec(dir);
-  const arrowDir = new THREE.Vector3(dv.x, 0, dv.z);
-  const origin = new THREE.Vector3(selectedCube.gx, 1.3, selectedCube.gz);
+  const arrowDir = new THREE.Vector3(dv.x, dv.y || 0, dv.z).normalize();
+  // Origin from center of the selected block
+  const origin = new THREE.Vector3(
+    selectedCube.gx,
+    0.5 + (selectedCube.gy || 0),
+    selectedCube.gz
+  );
 
   if (directionArrow) {
     directionArrow.position.copy(origin);
@@ -521,9 +687,10 @@ function startLevel() {
     endZone = null;
   }
 
-  // Remove old obstacles
+  // Remove old obstacles and zones
   for (const o of levelObstacles) scene.remove(o);
   levelObstacles.length = 0;
+  letterZones.length = 0;
 
   // Starting word
   const word = getRandomWord();
@@ -540,6 +707,7 @@ function startLevel() {
     2: 'A wall blocks the way. Find a path around it!',
     3: 'The goal is in the air! Build upward momentum!',
     4: 'A pit separates you from the goal. Gain enough speed to cross!',
+    5: 'Letter zones! -X deletes words with X. +X deletes words WITHOUT X. Choose your words carefully!',
   };
 
   // ── Level configs ──
@@ -550,23 +718,40 @@ function startLevel() {
 
     case 2:
       createEndZone(12, 0, 4, 4);
-      // Wall between start and goal
       addWall(6, 0, 1, 3, 10);
       break;
 
     case 3:
-      // Goal is elevated
       createEndZone(10, 0, 4, 4, 4);
       break;
 
     case 4:
       createEndZone(14, 0, 4, 4);
-      // Pit between start and goal
       addPit(7, 0, 4, 8);
       break;
 
+    case 5: {
+      // Letter zone level - goal is nearby but zones make it tricky
+      createEndZone(12, 4, 4, 4);
+
+      // Generate a grid of letter zones (8-unit blocks)
+      const zoneLetters = 'AEIORSTLN';
+      const zoneSize = 8;
+      // 3x3 grid of zones offset from center
+      for (let row = -1; row <= 1; row++) {
+        for (let col = 0; col <= 2; col++) {
+          const zx = 4 + col * zoneSize;
+          const zz = row * zoneSize;
+          // Alternate + and - in a checker pattern
+          const type = (row + col) % 2 === 0 ? '-' : '+';
+          const letter = zoneLetters[Math.floor(Math.random() * zoneLetters.length)];
+          addLetterZone(zx, zz, zoneSize, type, letter);
+        }
+      }
+      break;
+    }
+
     default:
-      // Beyond level 4, random layout
       createEndZone(10, 0, 4, 4);
       break;
   }
@@ -648,28 +833,30 @@ function submitWord() {
     return;
   }
 
-  // Direction based on mouse position relative to selected cube
-  const dir = dirFromMouse(selectedCube.gx, selectedCube.gz);
+  // Direction based on mouse position relative to selected cube (3D)
+  const dir = dirFromMouse(selectedCube.gx, selectedCube.gy, selectedCube.gz);
   const dv = dirToVec(dir);
 
   // Calculate starting position so that text[idx] aligns with selectedCube
   const startGx = selectedCube.gx - dv.x * idx;
+  const startGy = (selectedCube.gy || 0) - (dv.y || 0) * idx;
   const startGz = selectedCube.gz - dv.z * idx;
 
   // Check for conflicts - letters at occupied positions must match
   for (let i = 0; i < text.length; i++) {
     const gx = startGx + dv.x * i;
+    const gy = startGy + (dv.y || 0) * i;
     const gz = startGz + dv.z * i;
-    const existing = cubes.find(c => c.gx === gx && c.gz === gz);
+    const existing = cubes.find(c => c.gx === gx && c.gy === gy && c.gz === gz);
     if (existing && existing.letter !== text[i]) {
-      showMessage(`Conflict: [${text[i]}] overlaps [${existing.letter}] at (${gx},${gz})`);
+      showMessage(`Conflict: [${text[i]}] overlaps [${existing.letter}]`);
       audio.error();
       return;
     }
   }
 
   const wordIdx = words.length;
-  const { placed, verb } = placeWord(text, startGx, startGz, dir, wordIdx, true);
+  const { placed, verb } = placeWord(text, startGx, startGz, dir, wordIdx, true, startGy);
 
   // Count only newly placed letters (not shared ones that already existed)
   const newLetters = placed.filter(c => c.wordIdx === wordIdx).length;
@@ -842,6 +1029,7 @@ function animate() {
 
   updateAnimations();
   updateVerbTimers();
+  updateLetterZones();
   updateDirectionArrow();
   updatePhysics(dt);
   updateCamera();

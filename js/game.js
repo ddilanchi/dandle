@@ -4,7 +4,7 @@ import * as CANNON from 'cannon-es';
 import { getRandomWord, isVerb, getWordTypes, isValidWord, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v1.1.6';
+const VERSION = 'v1.1.7';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -241,10 +241,9 @@ const wallBodies = [];     // static cannon bodies for level walls
 
 let endZone = null;
 let endZoneBox = null;
-let endZoneY = 0; // y position of end zone (for elevated goals)
 let directionArrow = null; // blue arrow showing word placement direction
 let currentLevel = 1;
-const levelObstacles = []; // meshes added per level (walls, pits, platforms)
+const levelObstacles = []; // meshes added per level (walls, platforms, zones)
 const letterZones = [];    // { x, z, size, type: '+'/'-', letter, mesh }
 
 // ── Animation queue ──
@@ -511,7 +510,6 @@ function dirFromMouse(cubeGx, cubeGy, cubeGz) {
 
 // ── End zone ──
 function createEndZone(x, z, w, d, y = 0) {
-  endZoneY = y;
   const geo = new THREE.PlaneGeometry(w, d);
   const mat = new THREE.MeshStandardMaterial({
     color: 0xcc2222,
@@ -904,17 +902,9 @@ function startLevel() {
   // Starting word
   const word = getRandomWord();
   const startX = -Math.floor(word.length / 2);
-  console.warn('startLevel word=' + word + ' startX=' + startX);
-  try {
-    placeWord(word, startX, 0, 'x+', 0);
-    console.warn('placeWord ok | cubes=' + cubes.length + ' | groupChildren=' + structureGroup.children.length);
-  } catch(e) { console.error('placeWord failed: ' + e); }
+  placeWord(word, startX, 0, 'x+', 0);
   lettersUsed = word.length;
-  try {
-    createStructureBody();
-    console.warn('cannon body ok | pos=' + JSON.stringify(structureBody?.position));
-  } catch(e) { console.error('createStructureBody failed: ' + e); }
-  console.warn('endZone=' + (endZone ? 'yes' : 'no') + ' | cubes=' + cubes.length);
+  createStructureBody();
 
   // Camera target
   controls.target.set(0, 0, 0);
@@ -977,8 +967,6 @@ function startLevel() {
 
   levelInfoEl.textContent = `Level ${currentLevel}`;
   hintEl.textContent = LEVEL_HINTS[currentLevel] || 'Reach the red zone!';
-  console.warn('startLevel done | level=' + currentLevel + ' | endZone=' + (endZone ? 'yes' : 'no') + ' | obstacles=' + levelObstacles.length);
-
   // Start music for this level
   audio.startMusic(currentLevel);
 }
@@ -1311,7 +1299,6 @@ function syncSettingsUI() {
 
 settingsBtn.addEventListener('click', () => {
   syncSettingsUI();
-  settingsScreen.style.display = '';
   settingsScreen.classList.remove('hidden');
 });
 settingsClose.addEventListener('click', () => settingsScreen.classList.add('hidden'));
@@ -1535,5 +1522,4 @@ window.addEventListener('keydown', () => {
 });
 
 // ── Start ──
-console.warn('game.js loaded ok | CANNON=' + (typeof CANNON) + ' | CANNON.World=' + (typeof CANNON?.World) + ' | CANNON.Body=' + (typeof CANNON?.Body));
 animate();

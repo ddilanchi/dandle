@@ -305,7 +305,6 @@ export class AudioManager {
     this._nextBeat = this.ctx.currentTime + 0.05;
     this._beatIndex = 0;
     this._melodyNote = 16; // start in upper half of scale
-    this._bassStep = 0;    // walking bass position in scale
 
     this._musicGain = this.ctx.createGain();
     this._musicGain.gain.value = 0.07;

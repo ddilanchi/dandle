@@ -160,6 +160,49 @@ export class AudioManager {
     o.stop(t + 0.2);
   }
 
+  explode() {
+    this.ensure();
+    const t = this.ctx.currentTime;
+
+    // Deep boom
+    const o = this.ctx.createOscillator();
+    const g = this.ctx.createGain();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(80, t);
+    o.frequency.exponentialRampToValueAtTime(20, t + 0.8);
+    g.gain.setValueAtTime(0.5, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 1.0);
+    o.connect(g).connect(this.ctx.destination);
+    o.start(t);
+    o.stop(t + 1.0);
+
+    // Crackle noise burst
+    const buf = this.ctx.createBuffer(1, this.ctx.sampleRate * 0.5, this.ctx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < data.length; i++) {
+      data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (this.ctx.sampleRate * 0.08));
+    }
+    const n = this.ctx.createBufferSource();
+    const ng = this.ctx.createGain();
+    n.buffer = buf;
+    ng.gain.setValueAtTime(0.4, t);
+    ng.gain.exponentialRampToValueAtTime(0.001, t + 0.5);
+    n.connect(ng).connect(this.ctx.destination);
+    n.start(t);
+
+    // High shatter
+    const o2 = this.ctx.createOscillator();
+    const g2 = this.ctx.createGain();
+    o2.type = 'sawtooth';
+    o2.frequency.setValueAtTime(2000, t);
+    o2.frequency.exponentialRampToValueAtTime(100, t + 0.3);
+    g2.gain.setValueAtTime(0.15, t);
+    g2.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+    o2.connect(g2).connect(this.ctx.destination);
+    o2.start(t);
+    o2.stop(t + 0.3);
+  }
+
   // ── Background music ──
   // Procedural jazz/blues that reacts to cube count
 

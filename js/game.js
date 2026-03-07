@@ -282,27 +282,27 @@ function dirToVec(dir) {
 // ── Get 3D direction from selected cube toward mouse ──
 function dirFromMouse(cubeGx, cubeGy, cubeGz) {
   const wx = cubeGx + structureGroup.position.x;
-  const wy = (cubeGy || 0.5) + structureGroup.position.y;
+  const wy = 0.5 + (cubeGy || 0) + structureGroup.position.y;
   const wz = cubeGz + structureGroup.position.z;
 
-  // Raycast from mouse into scene to get a 3D target point
+  // Cast ray from mouse and find the closest point on the ray to the cube center
   raycaster.setFromCamera(mouse, camera);
-  // Intersect ground plane for XZ, but also check vertical via camera angle
-  const target = new THREE.Vector3();
-  raycaster.ray.intersectPlane(groundPlane, target);
+  const cubeWorld = new THREE.Vector3(wx, wy, wz);
+  const closestPoint = new THREE.Vector3();
+  raycaster.ray.closestPointToPoint(cubeWorld, closestPoint);
 
-  const dx = target.x - wx;
-  const dz = target.z - wz;
+  const dx = closestPoint.x - wx;
+  const dy = closestPoint.y - wy;
+  const dz = closestPoint.z - wz;
+  const ax = Math.abs(dx);
+  const ay = Math.abs(dy);
+  const az = Math.abs(dz);
 
-  // Check if camera is looking steeply down - if mouse is very close to the cube
-  // in XZ, interpret as vertical (Y+)
-  const xzDist = Math.sqrt(dx * dx + dz * dz);
-  if (xzDist < 1.5) {
-    return 'y+';
+  // Pick the dominant axis
+  if (ay >= ax && ay >= az) {
+    return dy >= 0 ? 'y+' : 'y-';
   }
-
-  // Pick the dominant horizontal axis
-  if (Math.abs(dx) >= Math.abs(dz)) {
+  if (ax >= az) {
     return dx >= 0 ? 'x+' : 'x-';
   }
   return dz >= 0 ? 'z+' : 'z-';
@@ -915,6 +915,14 @@ function submitWord() {
     return;
   }
 
+  // Easter egg: DAN makes everything explode
+  if (text === 'DAN') {
+    wordInput.value = '';
+    inputContainer.classList.add('hidden');
+    explodeStructure();
+    return;
+  }
+
   const wordIdx = words.length;
   const { placed, verb } = placeWord(text, startGx, startGz, dir, wordIdx, true, startGy);
 
@@ -942,6 +950,74 @@ wordInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') submitWord();
   e.stopPropagation();
 });
+
+// ── Explosion (DAN easter egg) ──
+function explodeStructure() {
+  audio.explode();
+  showMessage('DAN?! BOOM!', '#ff2222');
+
+  // Fling every cube outward with random velocity
+  const now = performance.now() / 1000;
+  for (const c of cubes) {
+    const mesh = c.mesh;
+    // Detach from structure group into scene so they fly independently
+    const worldPos = new THREE.Vector3();
+    mesh.getWorldPosition(worldPos);
+    structureGroup.remove(mesh);
+    scene.add(mesh);
+    mesh.position.copy(worldPos);
+
+    // Random explosion velocity
+    const vx = (Math.random() - 0.5) * 30;
+    const vy = 8 + Math.random() * 15;
+    const vz = (Math.random() - 0.5) * 30;
+    const spin = {
+      x: (Math.random() - 0.5) * 15,
+      y: (Math.random() - 0.5) * 15,
+      z: (Math.random() - 0.5) * 15,
+    };
+
+    // Animate each piece as a physics projectile
+    const startTime = now;
+    const piece = { mesh, vx, vy, vz, spin, startTime };
+    explosionPieces.push(piece);
+  }
+
+  // Remove arrows, sprites, highlights
+  while (structureGroup.children.length) {
+    structureGroup.remove(structureGroup.children[0]);
+  }
+  cubes.length = 0;
+  words.length = 0;
+  animations.length = 0;
+  selectedCube = null;
+  clearHighlight();
+  removeDirectionArrow();
+  inputContainer.classList.add('hidden');
+
+  // Restart after the explosion settles
+  levelComplete = true;
+  setTimeout(() => {
+    // Clean up explosion pieces
+    for (const p of explosionPieces) scene.remove(p.mesh);
+    explosionPieces.length = 0;
+    startLevel();
+  }, 3000);
+}
+
+const explosionPieces = [];
+
+function updateExplosion(dt) {
+  for (const p of explosionPieces) {
+    p.vy -= 20 * dt; // gravity
+    p.mesh.position.x += p.vx * dt;
+    p.mesh.position.y += p.vy * dt;
+    p.mesh.position.z += p.vz * dt;
+    p.mesh.rotation.x += p.spin.x * dt;
+    p.mesh.rotation.y += p.spin.y * dt;
+    p.mesh.rotation.z += p.spin.z * dt;
+  }
+}
 
 // ── Restart button ──
 restartBtn.addEventListener('click', () => {
@@ -1097,6 +1173,7 @@ function animate() {
   updateLetterZones();
   updateDirectionArrow();
   audio.setMusicIntensity(cubes.length);
+  updateExplosion(dt);
   updatePhysics(dt);
   updateCamera();
   animateEndZone(time);

@@ -61,9 +61,9 @@ Type detection: WordNet 3.1 (74k words), with hardcoded VERBS/ADJECTIVES as fall
 ---
 
 ## Level Progression
-- 5 levels, each with a unique obstacle layout
+- 6 levels, each with a unique obstacle layout
 - Click anywhere on the level-complete screen to advance to the next level
-- Loops back to Level 1 after Level 5
+- Loops back to Level 1 after Level 6
 - Restart button → level select (manual navigation)
 
 | Level | Layout |
@@ -73,6 +73,7 @@ Type detection: WordNet 3.1 (74k words), with hardcoded VERBS/ADJECTIVES as fall
 | 3 | Elevated end zone (build upward) |
 | 4 | Two islands — bridge the gap or launch across |
 | 5 | Letter zones scattered across the floor |
+| 6 | Zip line — build a hook to slide down to the end |
 
 ---
 

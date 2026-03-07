@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Dandle</title>
-  <link rel="stylesheet" href="css/style.css?v=1.5.4">
+  <link rel="stylesheet" href="css/style.css?v=1.5.5">
   <script type="importmap">
   {
     "imports": {
@@ -20,6 +20,7 @@
     <div id="top-bar">
       <div id="level-info">Level 1</div>
       <button id="restart-btn">Restart</button>
+      <button id="level-select-btn">Levels</button>
       <button id="settings-btn">&#9881;</button>
     </div>
     <div id="hint">Click a cube, type a word. Shift+WASD/QE: move selection. Shift+Space: cycle direction.</div>
@@ -35,7 +36,7 @@
   </div>
   <div id="level-complete" class="hidden">
     <h1>Level Complete!</h1>
-    <p>Click anywhere to continue</p>
+    <p>Press SPACE to continue</p>
   </div>
   <div id="type-spinner" class="hidden">
     <div id="spinner-word"></div>
@@ -142,6 +143,6 @@
       }
     });
   </script>
-  <script type="module" src="js/game.js?v=1.5.4"></script>
+  <script type="module" src="js/game.js?v=1.5.5"></script>
 </body>
 </html>

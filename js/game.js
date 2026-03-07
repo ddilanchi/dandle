@@ -4,7 +4,7 @@ import * as CANNON from 'cannon-es';
 import { getRandomWord, isVerb, getWordTypes, isValidWord, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v1.5.4';
+const VERSION = 'v1.5.5';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -41,7 +41,7 @@ function loadSettings() {
 function saveSettings(s) { localStorage.setItem('dandle_settings', JSON.stringify(s)); }
 let currentSettings = loadSettings();
 
-const TOTAL_LEVELS = 5;
+const TOTAL_LEVELS = 6;
 
 // Progression stored in localStorage
 function getUnlockedLevels() {
@@ -423,6 +423,9 @@ function placeWord(text, startGx, startGz, dir, wordIdx, animated = false, start
     dirVec,
     text,
     wordIdx,
+    startGx,
+    startGy,
+    startGz,
     currentAnim: null,
   };
   _placeNextLetter(); // start first one immediately
@@ -435,6 +438,22 @@ function _placeNextLetter() {
   if (q.index >= q.letters.length) {
     _addVerbArrow(q.wordEntry, q.dirVec, q.text, q.wordIdx);
     _placementQueue = null;
+    // Select the last letter of the word
+    const dv = q.dirVec;
+    const lastIdx = q.text.length - 1;
+    const lastGx = q.startGx + dv.x * lastIdx;
+    const lastGy = q.startGy + (dv.y || 0) * lastIdx;
+    const lastGz = q.startGz + dv.z * lastIdx;
+    const lastCube = cubes.find(c => c.gx === lastGx && (c.gy || 0) === lastGy && c.gz === lastGz);
+    if (lastCube) {
+      selectedCube = lastCube;
+      highlightCube(lastCube);
+      updateDirectionArrow();
+      selectedInfoEl.textContent = `Selected: "${lastCube.letter}" at (${lastCube.gx}, ${lastCube.gz})`;
+      inputContainer.classList.remove('hidden');
+      wordInput.value = '';
+      wordInput.focus();
+    }
     return;
   }
 
@@ -673,6 +692,46 @@ function addWall(x, z, w, h, d) {
   wallBodies.push(wallBody);
 
   return wall;
+}
+
+// ── Zip line pole ──
+function addZipLine(x1, y1, z1, x2, y2, z2, radius = 0.3) {
+  // Visual: cylinder between two points
+  const start = new THREE.Vector3(x1, y1, z1);
+  const end = new THREE.Vector3(x2, y2, z2);
+  const length = start.distanceTo(end);
+  const mid = start.clone().add(end).multiplyScalar(0.5);
+  const dir = end.clone().sub(start).normalize();
+
+  const geo = new THREE.CylinderGeometry(radius, radius, length, 12);
+  const mat = new THREE.MeshStandardMaterial({ color: 0x888899, metalness: 0.8, roughness: 0.2 });
+  const pole = new THREE.Mesh(geo, mat);
+  pole.position.copy(mid);
+  // Align cylinder (default Y-axis) to the direction vector
+  const up = new THREE.Vector3(0, 1, 0);
+  const quat = new THREE.Quaternion().setFromUnitVectors(up, dir);
+  pole.quaternion.copy(quat);
+  pole.castShadow = true;
+  pole.receiveShadow = true;
+  scene.add(pole);
+  levelObstacles.push(pole);
+
+  // Physics: approximate with a series of box shapes along the line
+  const segments = Math.ceil(length / 2);
+  const segLen = length / segments;
+  for (let i = 0; i < segments; i++) {
+    const t = (i + 0.5) / segments;
+    const pos = start.clone().lerp(end, t);
+    const body = new CANNON.Body({ mass: 0, material: groundMat });
+    body.addShape(new CANNON.Box(new CANNON.Vec3(radius, segLen / 2, radius)));
+    body.position.set(pos.x, pos.y, pos.z);
+    // Orient each segment box along the pole direction
+    body.quaternion.set(quat.x, quat.y, quat.z, quat.w);
+    world.addBody(body);
+    wallBodies.push(body);
+  }
+
+  return pole;
 }
 
 // ── Letter zones ──
@@ -1098,6 +1157,16 @@ function startLevel() {
       for (let z = -5; z < 5; z++)
         tiles.push({ x, z, y: 0 });
     buildFloor(tiles);
+  } else if (currentLevel === 6) {
+    // Zip line: elevated start island, lower end island
+    const tiles = [];
+    for (let x = -6; x < 4; x++)
+      for (let z = -4; z < 4; z++)
+        tiles.push({ x, z, y: 10 });
+    for (let x = 20; x < 30; x++)
+      for (let z = -4; z < 4; z++)
+        tiles.push({ x, z, y: 0 });
+    buildFloor(tiles);
   } else {
     buildFloor();
   }
@@ -1105,13 +1174,15 @@ function startLevel() {
   // Starting word
   const word = getRandomWord();
   const startX = -Math.floor(word.length / 2);
-  placeWord(word, startX, 0, 'x+', 0);
+  const startY = currentLevel === 6 ? 10 : 0;
+  placeWord(word, startX, 0, 'x+', 0, false, startY);
   lettersUsed = word.length;
   createStructureBody();
 
   // Camera target
-  controls.target.set(0, 0, 0);
-  camera.position.set(6, 8, 10);
+  const camTargetY = startY;
+  controls.target.set(0, camTargetY, 0);
+  camera.position.set(6, camTargetY + 8, 10);
 
   const LEVEL_HINTS = {
     1: 'Push your structure into the red zone using VERBS!',
@@ -1119,6 +1190,7 @@ function startLevel() {
     3: 'The goal is in the air! Build upward momentum!',
     4: 'Two islands! Bridge the gap or launch across!',
     5: 'Letter zones! -X deletes words with X. +X deletes words WITHOUT X. Choose your words carefully!',
+    6: 'Zip line! Build a hook shape to slide down the pole to the end zone!',
   };
 
   // ── Level configs ──
@@ -1141,23 +1213,29 @@ function startLevel() {
       break;
 
     case 5: {
-      // Letter zone level - goal is nearby but zones make it tricky
-      createEndZone(12, 4, 4, 4);
+      // Letter zone level - end zone elevated above the letter fields
+      createEndZone(18, 0, 4, 4, 5);
 
-      // Generate a grid of letter zones (8-unit blocks)
+      // Letter zones form a gauntlet between start and end
       const zoneLetters = 'AEIORSTLN';
-      const zoneSize = 8;
-      // 3x3 grid of zones offset from center
+      const zoneSize = 4;
       for (let row = -1; row <= 1; row++) {
-        for (let col = 0; col <= 2; col++) {
-          const zx = 4 + col * zoneSize;
+        for (let col = 0; col <= 3; col++) {
+          const zx = 3 + col * zoneSize;
           const zz = row * zoneSize;
-          // Alternate + and - in a checker pattern
           const type = (row + col) % 2 === 0 ? '-' : '+';
           const letter = zoneLetters[Math.floor(Math.random() * zoneLetters.length)];
           addLetterZone(zx, zz, zoneSize, type, letter);
         }
       }
+      break;
+    }
+
+    case 6: {
+      // Zip line: angled pole from high start island to low end island
+      createEndZone(25, 0, 4, 4);
+      // Pole from start island edge to end island edge
+      addZipLine(3, 12, 0, 21, 2, 0, 0.3);
       break;
     }
 
@@ -1414,10 +1492,7 @@ function submitWord() {
       showMessage(`${chosenType}: "${text}" placed (${lettersUsed} letters used)`, typeColors[chosenType] || '#aaddff');
     }
 
-    selectedCube = null;
-    clearHighlight();
-    removeDirectionArrow();
-    selectedInfoEl.textContent = '';
+    // Selection will be restored by _placeNextLetter when animation completes
   };
 
   if (types.length > 1) {
@@ -1438,7 +1513,10 @@ wordInput.addEventListener('blur', () => {
 wordInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { submitWord(); return; }
 
-  // Shift+WASD: move selected cube, Shift+IJKL: change direction
+  // Arrow keys: let them bubble to window for camera control
+  if (e.key.startsWith('Arrow')) return;
+
+  // Shift+WASD/QE/Space: navigation
   if (e.shiftKey && _handleNavKey(e.key.toUpperCase())) {
     e.preventDefault();
     e.stopPropagation();
@@ -1518,6 +1596,13 @@ function updateExplosion(dt) {
 // ── Restart button ──
 restartBtn.addEventListener('click', () => {
   audio.stopMusic();
+  startLevel();
+});
+
+// ── Level select button ──
+const levelSelectBtn = document.getElementById('level-select-btn');
+levelSelectBtn.addEventListener('click', () => {
+  audio.stopMusic();
   showLevelSelect();
 });
 
@@ -1570,20 +1655,57 @@ settingsScreen.querySelectorAll('[data-setting="pixelate"] button').forEach(btn 
   });
 });
 
-// ── Level complete: click anywhere to advance ──
-levelCompleteEl.addEventListener('click', () => {
-  if (!levelFalling) {
-    levelCompleteEl.classList.add('hidden');
-    audio.stopMusic();
-    if (currentLevel < TOTAL_LEVELS) {
-      currentLevel++;
-      startLevel();
-    } else {
-      currentLevel = 1;
-      startLevel();
-    }
+// ── Level complete: press Space to advance ──
+function advanceLevel() {
+  if (levelFalling) return;
+  levelCompleteEl.classList.add('hidden');
+  audio.stopMusic();
+  if (currentLevel < TOTAL_LEVELS) {
+    currentLevel++;
+    startLevel();
+  } else {
+    currentLevel = 1;
+    startLevel();
+  }
+}
+window.addEventListener('keydown', (e) => {
+  if (e.key === ' ' && levelComplete && !levelCompleteEl.classList.contains('hidden')) {
+    e.preventDefault();
+    advanceLevel();
   }
 });
+levelCompleteEl.addEventListener('click', advanceLevel);
+
+// ── Arrow keys: orbit camera ──
+const _cameraKeys = new Set();
+const CAMERA_ORBIT_SPEED = 0.03;
+const CAMERA_ZOOM_SPEED = 0.5;
+
+window.addEventListener('keydown', (e) => {
+  if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+    _cameraKeys.add(e.key);
+    e.preventDefault();
+  }
+});
+window.addEventListener('keyup', (e) => {
+  _cameraKeys.delete(e.key);
+});
+
+function updateCameraKeys() {
+  if (_cameraKeys.size === 0) return;
+  // Get spherical coords relative to target
+  const offset = camera.position.clone().sub(controls.target);
+  const spherical = new THREE.Spherical().setFromVector3(offset);
+
+  if (_cameraKeys.has('ArrowLeft')) spherical.theta -= CAMERA_ORBIT_SPEED;
+  if (_cameraKeys.has('ArrowRight')) spherical.theta += CAMERA_ORBIT_SPEED;
+  if (_cameraKeys.has('ArrowUp')) spherical.phi = Math.max(0.1, spherical.phi - CAMERA_ORBIT_SPEED);
+  if (_cameraKeys.has('ArrowDown')) spherical.phi = Math.min(controls.maxPolarAngle, spherical.phi + CAMERA_ORBIT_SPEED);
+
+  offset.setFromSpherical(spherical);
+  camera.position.copy(controls.target).add(offset);
+  camera.lookAt(controls.target);
+}
 
 // ── Pause handler ──
 window.addEventListener('keydown', (e) => {
@@ -1649,7 +1771,7 @@ function updatePhysics(dt) {
         const isLast = currentLevel >= TOTAL_LEVELS;
         levelCompleteEl.querySelector('p').textContent = isLast
           ? `All ${TOTAL_LEVELS} levels done! Letters used: ${lettersUsed}`
-          : `Letters used: ${lettersUsed} — click anywhere to continue`;
+          : `Letters used: ${lettersUsed} — press SPACE to continue`;
         levelCompleteEl.classList.remove('hidden');
         audio.levelComplete();
         return;
@@ -1688,6 +1810,7 @@ function animate() {
     updateExplosion(dt);
     updatePhysics(dt);
     updateCamera();
+    updateCameraKeys();
     animateEndZone(time);
   }
   controls.update();

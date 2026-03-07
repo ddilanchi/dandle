@@ -4,7 +4,7 @@ import * as CANNON from 'cannon-es';
 import { getRandomWord, isVerb, getWordTypes, isValidWord, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v1.5.3';
+const VERSION = 'v1.5.4';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -1001,14 +1001,18 @@ function _getOpenFaces(cube) {
 function _handleNavKey(key) {
   if (!selectedCube) return false;
 
-  // Shift+WASD: move selection to adjacent cube
-  const moveMap = { 'W': { x: 0, z: -1 }, 'S': { x: 0, z: 1 }, 'A': { x: -1, z: 0 }, 'D': { x: 1, z: 0 } };
+  // Shift+WASD/QE: move selection to adjacent cube
+  const moveMap = {
+    'W': { x: 0, y: 0, z: -1 }, 'S': { x: 0, y: 0, z: 1 },
+    'A': { x: -1, y: 0, z: 0 }, 'D': { x: 1, y: 0, z: 0 },
+    'Q': { x: 0, y: 1, z: 0 }, 'E': { x: 0, y: -1, z: 0 },
+  };
   if (moveMap[key]) {
     const m = moveMap[key];
     const neighbor = cubes.find(c =>
       c.gx === selectedCube.gx + m.x &&
-      c.gz === selectedCube.gz + m.z &&
-      (c.gy || 0) === (selectedCube.gy || 0)
+      (c.gy || 0) === (selectedCube.gy || 0) + m.y &&
+      c.gz === selectedCube.gz + m.z
     );
     if (neighbor) {
       selectedCube = neighbor;

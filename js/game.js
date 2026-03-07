@@ -4,7 +4,7 @@ import * as CANNON from 'cannon-es';
 import { getRandomWord, isVerb, getWordTypes, isValidWord, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v1.5.5';
+const VERSION = 'v1.5.6';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -372,6 +372,93 @@ function makeLetterMesh(letter, isVerbCube) {
   mesh.castShadow = true;
   mesh.receiveShadow = true;
   return mesh;
+}
+
+// ── Ghost preview cubes ──
+let _ghostMeshes = [];
+
+function makeGhostMesh(letter) {
+  const mats = [];
+  for (let i = 0; i < 6; i++) {
+    const c = document.createElement('canvas');
+    c.width = 128;
+    c.height = 128;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = 'rgba(200, 220, 255, 0.3)';
+    ctx.fillRect(0, 0, 128, 128);
+    ctx.strokeStyle = 'rgba(100, 150, 255, 0.5)';
+    ctx.lineWidth = 4;
+    ctx.strokeRect(2, 2, 124, 124);
+    ctx.fillStyle = 'rgba(50, 80, 200, 0.6)';
+    ctx.font = 'bold 78px Arial';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(letter, 64, 68);
+    const tex = new THREE.CanvasTexture(c);
+    mats.push(new THREE.MeshStandardMaterial({ map: tex, transparent: true, opacity: 0.4 }));
+  }
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(0.94, 0.94, 0.94), mats);
+  mesh.renderOrder = 1;
+  return mesh;
+}
+
+function clearGhosts() {
+  for (const g of _ghostMeshes) structureGroup.remove(g);
+  _ghostMeshes = [];
+}
+
+function updateGhostPreview() {
+  clearGhosts();
+  if (!selectedCube || levelComplete || _placementQueue) return;
+
+  const text = wordInput.value.toUpperCase().trim();
+  if (text.length < 1) return;
+
+  const letter = selectedCube.letter;
+  const dir = currentDir;
+  const dv = dirToVec(dir);
+
+  // Find anchor index (same logic as submitWord)
+  const allIdx = [];
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === letter) allIdx.push(i);
+  }
+  if (allIdx.length === 0) return;
+
+  let bestIdx = -1;
+  for (const idx of allIdx) {
+    const sx = selectedCube.gx - dv.x * idx;
+    const sy = (selectedCube.gy || 0) - (dv.y || 0) * idx;
+    const sz = selectedCube.gz - dv.z * idx;
+    let conflict = false;
+    for (let i = 0; i < text.length; i++) {
+      const gx = sx + dv.x * i;
+      const gy = sy + (dv.y || 0) * i;
+      const gz = sz + dv.z * i;
+      const existing = cubes.find(c => c.gx === gx && (c.gy || 0) === gy && c.gz === gz);
+      if (existing && existing.letter !== text[i]) { conflict = true; break; }
+    }
+    if (!conflict) { bestIdx = idx; break; }
+  }
+  if (bestIdx === -1) return;
+
+  const startGx = selectedCube.gx - dv.x * bestIdx;
+  const startGy = (selectedCube.gy || 0) - (dv.y || 0) * bestIdx;
+  const startGz = selectedCube.gz - dv.z * bestIdx;
+
+  for (let i = 0; i < text.length; i++) {
+    const gx = startGx + dv.x * i;
+    const gy = startGy + (dv.y || 0) * i;
+    const gz = startGz + dv.z * i;
+    // Skip positions that already have a real cube
+    const existing = cubes.find(c => c.gx === gx && (c.gy || 0) === gy && c.gz === gz);
+    if (existing) continue;
+
+    const ghost = makeGhostMesh(text[i]);
+    ghost.position.set(gx, 0.5 + gy, gz);
+    structureGroup.add(ghost);
+    _ghostMeshes.push(ghost);
+  }
 }
 
 // ── Place a word in the structure ──
@@ -1078,6 +1165,7 @@ function _handleNavKey(key) {
       highlightCube(neighbor);
       selectedInfoEl.textContent = `Selected: [${neighbor.letter}] at (${neighbor.gx}, ${neighbor.gz})`;
       audio.select();
+      updateGhostPreview();
     }
     return true;
   }
@@ -1089,6 +1177,7 @@ function _handleNavKey(key) {
     const curIdx = openFaces.indexOf(currentDir);
     currentDir = openFaces[(curIdx + 1) % openFaces.length];
     audio.select();
+    updateGhostPreview();
     return true;
   }
 
@@ -1120,6 +1209,7 @@ function startLevel() {
   structureGroup.position.set(0, 0, 0);
   structureGroup.quaternion.identity();
   selectedCube = null;
+  _ghostMeshes = [];
   clearHighlight();
   removeDirectionArrow();
   levelComplete = false;
@@ -1155,6 +1245,13 @@ function startLevel() {
         tiles.push({ x, z, y: 0 });
     for (let x = 9; x < 18; x++)
       for (let z = -5; z < 5; z++)
+        tiles.push({ x, z, y: 0 });
+    buildFloor(tiles);
+  } else if (currentLevel === 5) {
+    // Narrow corridor forcing you through letter zones
+    const tiles = [];
+    for (let x = -8; x < 22; x++)
+      for (let z = -2; z < 2; z++)
         tiles.push({ x, z, y: 0 });
     buildFloor(tiles);
   } else if (currentLevel === 6) {
@@ -1213,20 +1310,17 @@ function startLevel() {
       break;
 
     case 5: {
-      // Letter zone level - end zone elevated above the letter fields
-      createEndZone(18, 0, 4, 4, 5);
+      // Letter zone level - narrow corridor, end zone high in the air
+      createEndZone(18, 0, 4, 4, 8);
 
-      // Letter zones form a gauntlet between start and end
+      // Letter zones span the narrow corridor between start and end
       const zoneLetters = 'AEIORSTLN';
-      const zoneSize = 4;
-      for (let row = -1; row <= 1; row++) {
-        for (let col = 0; col <= 3; col++) {
-          const zx = 3 + col * zoneSize;
-          const zz = row * zoneSize;
-          const type = (row + col) % 2 === 0 ? '-' : '+';
-          const letter = zoneLetters[Math.floor(Math.random() * zoneLetters.length)];
-          addLetterZone(zx, zz, zoneSize, type, letter);
-        }
+      const zoneSize = 3;
+      for (let col = 0; col < 5; col++) {
+        const zx = 2 + col * zoneSize;
+        const type = col % 2 === 0 ? '-' : '+';
+        const letter = zoneLetters[Math.floor(Math.random() * zoneLetters.length)];
+        addLetterZone(zx, 0, zoneSize, type, letter);
       }
       break;
     }
@@ -1383,6 +1477,7 @@ function spinWordType(word, types) {
 // ── Word submission ──
 function submitWord() {
   if (!selectedCube || levelComplete || _placementQueue) return;
+  clearGhosts();
   const text = wordInput.value.toUpperCase().trim();
   if (text.length < 2) {
     showMessage('Word must be at least 2 letters');
@@ -1524,6 +1619,9 @@ wordInput.addEventListener('keydown', (e) => {
   }
   e.stopPropagation();
 });
+
+// Update ghost preview as user types
+wordInput.addEventListener('input', updateGhostPreview);
 
 // ── Explosion (DAN easter egg) ──
 function explodeStructure() {

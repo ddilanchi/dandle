@@ -71,7 +71,7 @@ Type detection: WordNet 3.1 (74k words), with hardcoded VERBS/ADJECTIVES as fall
 | 1 | Open field — learn the basics |
 | 2 | Wall blocking the path |
 | 3 | Elevated end zone (build upward) |
-| 4 | Corridor walls — navigate through |
+| 4 | Two islands — bridge the gap or launch across |
 | 5 | Letter zones scattered across the floor |
 
 ---

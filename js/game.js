@@ -4,7 +4,7 @@ import * as CANNON from 'cannon-es';
 import { getRandomWord, isVerb, getWordTypes, isValidWord, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v1.3.3';
+const VERSION = 'v1.4.0';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -232,7 +232,7 @@ scene.add(structureGroup);
 
 const cubes = [];       // { letter, gx, gy, gz, mesh, wordIdx }
 const words = [];       // { text, dir, isVerb, arrowHelper }
-const VERB_FORCE = 3;  // force per letter (applied each physics substep)
+const VERB_FORCE = 10;  // force per letter (applied each physics substep)
 const VERB_DELAY = 3;   // seconds before verb activates
 const GRAVITY = 20;
 
@@ -259,12 +259,7 @@ world.addEventListener('preStep', () => {
     const dv = dirToVec(w.dir);
     const thrust = VERB_FORCE * w.text.length;
     const worldForce = new CANNON.Vec3(dv.x * thrust, 0, dv.z * thrust);
-    const wordCubes = cubes.filter(c => c.wordIdx === words.indexOf(w));
-    if (wordCubes.length > 0) {
-      const mid = wordCubes[Math.floor(wordCubes.length / 2)];
-      const wp = cubeWorldPos(mid);
-      structureBody.applyForce(worldForce, new CANNON.Vec3(wp.x, wp.y, wp.z));
-    }
+    structureBody.applyForce(worldForce, structureBody.position);
   }
 });
 
@@ -767,7 +762,6 @@ function deleteWord(wordIdx) {
       soundIndex: 0,
       soundPlayed: true, // don't play pop
       isShrink: true,
-      cubeIndex: i,
     });
   }
 }
@@ -995,7 +989,19 @@ function startLevel() {
   wallBodies.length = 0;
 
   // Build floor for this level
-  buildFloor();
+  if (currentLevel === 4) {
+    // Two islands with a gap
+    const tiles = [];
+    for (let x = -8; x < 5; x++)
+      for (let z = -5; z < 5; z++)
+        tiles.push({ x, z, y: 0 });
+    for (let x = 9; x < 18; x++)
+      for (let z = -5; z < 5; z++)
+        tiles.push({ x, z, y: 0 });
+    buildFloor(tiles);
+  } else {
+    buildFloor();
+  }
 
   // Starting word
   const word = getRandomWord();
@@ -1012,7 +1018,7 @@ function startLevel() {
     1: 'Push your structure into the red zone using VERBS!',
     2: 'A wall blocks the way. Find a path around it!',
     3: 'The goal is in the air! Build upward momentum!',
-    4: 'Two walls form a corridor. Navigate through!',
+    4: 'Two islands! Bridge the gap or launch across!',
     5: 'Letter zones! -X deletes words with X. +X deletes words WITHOUT X. Choose your words carefully!',
   };
 
@@ -1033,8 +1039,6 @@ function startLevel() {
 
     case 4:
       createEndZone(14, 0, 4, 4);
-      addWall(5, 0, 1, 3, 6);   // left corridor wall
-      addWall(5, 0, 1, 3, -6);  // right corridor wall
       break;
 
     case 5: {
@@ -1201,7 +1205,7 @@ function spinWordType(word, types) {
 
 // ── Word submission ──
 function submitWord() {
-  if (!selectedCube || levelComplete) return;
+  if (!selectedCube || levelComplete || _placementQueue) return;
   const text = wordInput.value.toUpperCase().trim();
   if (text.length < 2) {
     showMessage('Word must be at least 2 letters');
@@ -1270,6 +1274,7 @@ function submitWord() {
   wordInput.value = '';
 
   const doPlace = (chosenType) => {
+    if (levelComplete) return;
     const treatAsVerb = chosenType === 'VERB';
     const wordIdx = words.length;
     placeWord(text, startGx, startGz, dir, wordIdx, true, startGy, treatAsVerb);

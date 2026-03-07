@@ -210,16 +210,16 @@ body {
 
 #type-spinner {
   position: fixed;
-  top: 50%;
+  bottom: 120px;
   left: 50%;
-  transform: translate(-50%, -50%);
+  transform: translateX(-50%);
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 16px;
+  gap: 12px;
   background: #0a1a14;
-  padding: 36px 56px;
-  border-radius: 16px;
+  padding: 20px 40px;
+  border-radius: 12px;
   border: 1px solid rgba(212, 197, 160, 0.25);
   z-index: 150;
   pointer-events: none;

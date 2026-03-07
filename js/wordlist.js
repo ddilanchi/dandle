@@ -71,10 +71,10 @@ function _findBase(w) {
   if (_wordnet[w]) return w;
   // Plurals: TOYS→TOY, BOXES→BOX, CHURCHES→CHURCH, BABIES→BABY
   if (w.endsWith('IES') && w.length > 4) { const b = w.slice(0, -3) + 'Y'; if (_wordnet[b]) return b; }
-  if (w.endsWith('SES') || w.endsWith('XES') || w.endsWith('ZES') || w.endsWith('CHES') || w.endsWith('SHES')) {
-    const b = w.endsWith('CHES') || w.endsWith('SHES') ? w.slice(0, -2) : w.slice(0, -2);
-    if (_wordnet[b]) return b;
-    const b2 = w.slice(0, -1); if (_wordnet[b2]) return b2;
+  if (w.endsWith('CHES') || w.endsWith('SHES')) {
+    const b = w.slice(0, -2); if (_wordnet[b]) return b;  // MATCHES→MATCH
+  } else if (w.endsWith('SES') || w.endsWith('XES') || w.endsWith('ZES')) {
+    const b = w.slice(0, -2); if (_wordnet[b]) return b;  // BOXES→BOX
   }
   if (w.endsWith('S') && !w.endsWith('SS')) { const b = w.slice(0, -1); if (_wordnet[b]) return b; }
   // Past tense / -ing: JUMPED→JUMP, RUNNING→RUN

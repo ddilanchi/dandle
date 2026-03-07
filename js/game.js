@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { getRandomWord, isVerb, getWordTypes, isValidWord, initWordNet } from './wordlist.js';
+import { getRandomWord, isVerb, getWordTypes, isValidWord, initWordNet, getLoadProgress, isLoadDone } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
 // ── DOM ──
@@ -1468,14 +1468,34 @@ window.addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
-// ── Intro screen ──
+// ── Intro screen loading progress ──
 const startPromptEl = document.getElementById('intro-start');
+const introLoaderBar = document.getElementById('intro-loader-bar');
+const introLoaderText = document.getElementById('intro-loader-text');
+const introLoader = document.getElementById('intro-loader');
+
+(function pollProgress() {
+  const pct = Math.round(getLoadProgress() * 100);
+  introLoaderBar.style.setProperty('--progress', pct + '%');
+  if (isLoadDone()) {
+    const err = getLoadError();
+    if (err) {
+      introLoaderText.textContent = 'Dictionary unavailable — playing without validation';
+    } else {
+      introLoaderText.textContent = `Dictionary loaded`;
+    }
+    introLoader.style.opacity = '0.5';
+    startPromptEl.classList.remove('hidden');
+  } else {
+    introLoaderText.textContent = `Loading dictionary... ${pct}%`;
+    setTimeout(pollProgress, 100);
+  }
+})();
 
 async function beginGame() {
   if (gameStarted) return;
+  if (!isLoadDone()) return; // don't start until loaded
   gameStarted = true;
-  startPromptEl.textContent = 'Loading...';
-  await initWordNet();
   audio.init();
   introScreen.classList.add('hidden');
   showLevelSelect();
@@ -1483,8 +1503,8 @@ async function beginGame() {
 
 introScreen.addEventListener('click', beginGame);
 window.addEventListener('keydown', (e) => {
-  if (!gameStarted) beginGame();
-}, { once: true });
+  if (!gameStarted && isLoadDone()) beginGame();
+});
 
 // ── Start ──
 animate();

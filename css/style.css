@@ -442,11 +442,48 @@ body {
   font-size: 18px;
 }
 
+#intro-loader {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  width: 260px;
+}
+
+#intro-loader-bar {
+  width: 100%;
+  height: 3px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 2px;
+  overflow: hidden;
+  position: relative;
+}
+
+#intro-loader-bar::after {
+  content: '';
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  background: #ffd700;
+  border-radius: 2px;
+  width: var(--progress, 0%);
+  transition: width 0.2s ease;
+}
+
+#intro-loader-text {
+  font-size: 12px;
+  letter-spacing: 2px;
+  color: rgba(255, 255, 255, 0.35);
+}
+
 #intro-start {
   font-size: 13px;
   letter-spacing: 5px;
   color: rgba(255, 255, 255, 0.3);
   animation: blink 2s ease-in-out infinite;
+}
+
+#intro-start.hidden {
+  display: none;
 }
 
 @keyframes blink {

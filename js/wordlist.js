@@ -1,27 +1,62 @@
-// WordNet-backed word lookup.
-// wordnet-data.json maps UPPERCASE words to arrays of POS tags: "n", "v", "a"
-// Built by: node scripts/build-wordnet.js
+// WordNet 3.1 POS lookup — 74k words, built by scripts/build-wordnet.js
+// Loads in background immediately on module import.
 
 let _wordnet = null;
-// Start fetching immediately on module load — runs in background while user reads intro
-const _loadPromise = fetch('./wordnet-data.json')
-  .then(r => r.json())
-  .then(data => { _wordnet = data; })
-  .catch(() => { _wordnet = {}; }); // fail open
+let _loadProgress = 0; // 0–1
+let _loadDone = false;
+let _loadError = null;
 
-// Awaiting this resolves instantly if already loaded
+const _loadPromise = (async () => {
+  try {
+    const res = await fetch('./wordnet-data.json');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+    const contentLength = parseInt(res.headers.get('content-length') || '0', 10);
+    const reader = res.body.getReader();
+    const chunks = [];
+    let received = 0;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      received += value.length;
+      if (contentLength > 0) _loadProgress = received / contentLength;
+    }
+
+    _loadProgress = 0.95;
+    // Decode and parse off main thread isn't possible without a worker,
+    // but concatenate chunks efficiently first
+    let totalLen = 0;
+    for (const c of chunks) totalLen += c.length;
+    const merged = new Uint8Array(totalLen);
+    let offset = 0;
+    for (const c of chunks) { merged.set(c, offset); offset += c.length; }
+    const text = new TextDecoder().decode(merged);
+    _wordnet = JSON.parse(text);
+    _loadProgress = 1;
+  } catch (e) {
+    _loadError = e;
+    console.warn('WordNet load failed — falling back to permissive mode:', e.message);
+    _wordnet = {};
+    _loadProgress = 1;
+  }
+  _loadDone = true;
+})();
+
+export function getLoadProgress() { return _loadProgress; }
+export function isLoadDone() { return _loadDone; }
+export function getLoadError() { return _loadError; }
+
 export async function initWordNet() {
   await _loadPromise;
 }
 
-// Returns true if the word exists in WordNet
 export function isValidWord(word) {
-  if (!_wordnet) return true; // permissive before load
+  if (!_wordnet) return true; // permissive while loading
   return word.toUpperCase() in _wordnet;
 }
 
-// Returns array of type strings: one or more of 'VERB', 'NOUN', 'ADJ'
-// Falls back to ['NOUN'] for unknown words
 export function getWordTypes(word) {
   if (!_wordnet) return ['NOUN'];
   const tags = _wordnet[word.toUpperCase()];
@@ -41,13 +76,13 @@ export function isVerb(word) {
 
 export const STARTER_WORDS = [
   'BLOCK', 'CRANE', 'DRIFT', 'FLAME', 'GLOBE',
-  'HASTE', 'JOINT', 'KNELT', 'LEMON', 'MANGO',
-  'OLIVE', 'PLANT', 'QUIRK', 'ROAST', 'STONE',
+  'HASTE', 'JOINT', 'LEMON', 'MANGO',
+  'OLIVE', 'PLANT', 'ROAST', 'STONE',
   'TRAIL', 'VALOR', 'WHEAT', 'YACHT',
   'BLAZE', 'CRUST', 'FROST', 'GRASP',
   'HOUSE', 'IVORY', 'JUMBO', 'LUCID',
-  'MARCH', 'NERVE', 'ORBIT', 'PRISM', 'QUILT',
-  'RIDGE', 'SPEAR', 'THINK', 'UNITY', 'VIGOR',
+  'MARCH', 'NERVE', 'ORBIT', 'PRISM',
+  'RIDGE', 'SPEAR', 'THINK', 'VIGOR',
   'WORLD', 'EXTRA', 'YOUTH', 'ZEBRA', 'AMBER',
   'BIRCH', 'COMET', 'DELTA', 'EMBER', 'FLINT',
 ];

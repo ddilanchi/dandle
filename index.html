@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dandle</title>
+  <link rel="stylesheet" href="css/style.css">
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <div id="ui">
+    <div id="level-info">Level 1</div>
+    <div id="hint">Click a letter cube, then type a word containing that letter</div>
+    <div id="selected-info"></div>
+    <div id="word-input-container" class="hidden">
+      <input type="text" id="word-input" placeholder="Type a word..." autocomplete="off" />
+      <button id="submit-word">Place</button>
+    </div>
+    <div id="message"></div>
+  </div>
+  <div id="verb-legend" class="hidden">
+    <span class="arrow-icon">&rarr;</span> Verbs apply force in their direction
+  </div>
+  <div id="level-complete" class="hidden">
+    <h1>Level Complete!</h1>
+    <p>Press ENTER to continue</p>
+  </div>
+  <canvas id="game-canvas"></canvas>
+  <script type="module" src="js/game.js"></script>
+</body>
+</html>

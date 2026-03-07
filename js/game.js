@@ -4,7 +4,7 @@ import * as CANNON from 'cannon-es';
 import { getRandomWord, isVerb, getWordTypes, isValidWord, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v1.0.9';
+const VERSION = 'v1.1.0';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -525,10 +525,11 @@ function dirFromMouse(cubeGx, cubeGy, cubeGz) {
   const ay = Math.abs(dy);
   const az = Math.abs(dz);
 
-  // Pick the dominant axis
-  if (ay >= ax && ay >= az) {
-    return dy >= 0 ? 'y+' : 'y-';
+  // Pick the dominant axis (never allow y- — can't build into the floor)
+  if (ay >= ax && ay >= az && dy >= 0) {
+    return 'y+';
   }
+  // Horizontal fallback
   if (ax >= az) {
     return dx >= 0 ? 'x+' : 'x-';
   }
@@ -1175,12 +1176,6 @@ function submitWord() {
     audio.error();
     return;
   }
-  if (!isValidWord(text)) {
-    showMessage(`"${text}" is not a valid word`);
-    audio.error();
-    return;
-  }
-
   const letter = selectedCube.letter;
   const idx = text.indexOf(letter);
   if (idx === -1) {

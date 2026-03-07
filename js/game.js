@@ -4,7 +4,7 @@ import * as CANNON from 'cannon-es';
 import { getRandomWord, isVerb, getWordTypes, isValidWord, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v1.1.1';
+const VERSION = 'v1.1.2';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -169,7 +169,6 @@ let _carvedTiles = new Set(); // "gx,gz" keys for tiles removed by underground c
 function buildFloor(pits = []) {
   _currentPits = pits;
   if (floorMesh) { scene.remove(floorMesh); floorMesh = null; }
-  if (groundBody) { world.removeBody(groundBody); groundBody = null; }
 
   const green = new THREE.Color(0x6aad7a);
   const beige = new THREE.Color(0xece0c0);
@@ -203,31 +202,8 @@ function buildFloor(pits = []) {
   if (floorMesh.instanceColor) floorMesh.instanceColor.needsUpdate = true;
   scene.add(floorMesh);
 
-  // Physics: build static ground body avoiding pits
-  groundBody = new CANNON.Body({ mass: 0, material: groundMat });
-  const H = TILE_H / 2;
-  const S = FLOOR_HALF;
-  if (pits.length === 0) {
-    groundBody.addShape(new CANNON.Box(new CANNON.Vec3(S, H, S)));
-  } else {
-    const p = pits[0];
-    const px1 = p.x - p.w / 2, px2 = p.x + p.w / 2;
-    const pz1 = p.z - p.d / 2, pz2 = p.z + p.d / 2;
-    const sections = [
-      [-S, px1, -S, S], [px2, S, -S, S],
-      [px1, px2, -S, pz1], [px1, px2, pz2, S],
-    ];
-    sections.forEach(([x1, x2, z1, z2]) => {
-      const w = (x2 - x1) / 2, d = (z2 - z1) / 2;
-      if (w <= 0 || d <= 0) return;
-      groundBody.addShape(
-        new CANNON.Box(new CANNON.Vec3(w, H, d)),
-        new CANNON.Vec3((x1 + x2) / 2, 0, (z1 + z2) / 2)
-      );
-    });
-  }
-  groundBody.position.set(0, -H, 0);
-  world.addBody(groundBody);
+  // Ensure ground plane is active
+  if (!_groundInWorld) { world.addBody(groundBody); _groundInWorld = true; }
 }
 
 // Carve floor tiles where cubes are underground, then rebuild
@@ -279,7 +255,12 @@ world.addContactMaterial(new CANNON.ContactMaterial(groundMat, structureMat, {
   friction: 0.6,
 }));
 
-let groundBody = null; // rebuilt per level
+// Static ground plane (infinite, stable collision)
+const groundBody = new CANNON.Body({ mass: 0, material: groundMat });
+groundBody.addShape(new CANNON.Plane());
+groundBody.quaternion.setFromEuler(-Math.PI / 2, 0, 0);
+world.addBody(groundBody);
+let _groundInWorld = true;
 
 let structureBody = null;  // cannon rigid body for the whole structure
 let _comLocal = new THREE.Vector3(); // COM in structure local space
@@ -1463,23 +1444,31 @@ function updatePhysics(dt) {
   world.step(1 / 60, dt, 3);
   syncGroupFromBody();
 
-  // ── Pit detection ──
+  // ── Pit detection — remove ground plane when structure COM is over pit ──
+  let overPit = false;
   for (const obs of levelObstacles) {
     if (!obs.userData.isPit) continue;
     const b = obs.userData.bounds;
-    for (const c of cubes) {
-      const wp = cubeWorldPos(c);
-      if (Math.abs(wp.x - b.x) < b.hw && Math.abs(wp.z - b.z) < b.hd) {
-        levelFalling = true;
-        if (structureBody.position.y < -5) {
-          showMessage('Fell in the pit! Restarting...', '#ff6b6b');
-          levelComplete = true;
-          setTimeout(() => startLevel(), 1000);
-          return;
-        }
-        return;
-      }
+    const bx = structureBody.position.x, bz = structureBody.position.z;
+    if (Math.abs(bx - b.x) < b.hw && Math.abs(bz - b.z) < b.hd) {
+      overPit = true;
+      break;
     }
+  }
+  if (overPit && _groundInWorld) {
+    world.removeBody(groundBody);
+    _groundInWorld = false;
+    levelFalling = true;
+  }
+  if (!overPit && !_groundInWorld) {
+    world.addBody(groundBody);
+    _groundInWorld = true;
+  }
+  if (levelFalling && structureBody.position.y < -5) {
+    showMessage('Fell in the pit! Restarting...', '#ff6b6b');
+    levelComplete = true;
+    setTimeout(() => startLevel(), 1000);
+    return;
   }
 
   // ── Fell off edge ──

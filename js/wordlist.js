@@ -67,7 +67,11 @@ export async function initWordNet() {
 }
 
 export function isValidWord(word) {
-  return /^[A-Z]{2,}$/i.test(word);
+  if (!/^[A-Z]{2,}$/i.test(word)) return false;
+  const w = word.toUpperCase();
+  if (_wordnet) return !!_wordnet[w];
+  // WordNet not loaded — accept words from hardcoded sets or starter words
+  return VERBS.has(w) || ADJECTIVES.has(w) || STARTER_WORDS.includes(w);
 }
 
 export function getWordTypes(word) {

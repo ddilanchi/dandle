@@ -4,7 +4,7 @@ import * as CANNON from 'cannon-es';
 import { getRandomWord, isVerb, getWordTypes, isValidWord, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v1.0.7';
+const VERSION = 'v1.0.8';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -158,33 +158,72 @@ applySettings(currentSettings);
 // ── Audio ──
 const audio = new AudioManager();
 
-// ── Checkerboard floor ──
-function createFloor() {
-  const size = 40;
-  const geo = new THREE.PlaneGeometry(size, size);
-  const c = document.createElement('canvas');
-  c.width = 2048;
-  c.height = 2048;
-  const ctx = c.getContext('2d');
-  const tiles = 40;
-  const tileSize = 2048 / tiles;
-  const green = '#4a7c59';
-  const beige = '#d4c5a0';
-  for (let y = 0; y < tiles; y++) {
-    for (let x = 0; x < tiles; x++) {
-      ctx.fillStyle = (x + y) % 2 === 0 ? green : beige;
-      ctx.fillRect(x * tileSize, y * tileSize, tileSize, tileSize);
+// ── Tiled cube floor ──
+let floorMesh = null;
+const FLOOR_HALF = 20; // floor extends -20..+20
+const TILE_H = 0.5;
+
+function buildFloor(pits = []) {
+  if (floorMesh) { scene.remove(floorMesh); floorMesh = null; }
+  if (groundBody) { world.removeBody(groundBody); groundBody = null; }
+
+  const green = new THREE.Color(0x4a7c59);
+  const beige = new THREE.Color(0xd4c5a0);
+
+  // Collect tile positions, skipping pit areas
+  const tilePositions = [];
+  for (let xi = -FLOOR_HALF; xi < FLOOR_HALF; xi++) {
+    for (let zi = -FLOOR_HALF; zi < FLOOR_HALF; zi++) {
+      const tx = xi + 0.5, tz = zi + 0.5;
+      const inPit = pits.some(p =>
+        tx > p.x - p.w / 2 && tx < p.x + p.w / 2 &&
+        tz > p.z - p.d / 2 && tz < p.z + p.d / 2
+      );
+      if (!inPit) tilePositions.push({ tx, tz, xi, zi });
     }
   }
-  const tex = new THREE.CanvasTexture(c);
-  tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
-  const mat = new THREE.MeshStandardMaterial({ map: tex });
-  const mesh = new THREE.Mesh(geo, mat);
-  mesh.rotation.x = -Math.PI / 2;
-  mesh.receiveShadow = true;
-  scene.add(mesh);
+
+  const geo = new THREE.BoxGeometry(1, TILE_H, 1);
+  const mat = new THREE.MeshStandardMaterial();
+  floorMesh = new THREE.InstancedMesh(geo, mat, tilePositions.length);
+  floorMesh.receiveShadow = true;
+  const dummy = new THREE.Object3D();
+  tilePositions.forEach(({ tx, tz, xi, zi }, i) => {
+    dummy.position.set(tx, -TILE_H / 2, tz);
+    dummy.updateMatrix();
+    floorMesh.setMatrixAt(i, dummy.matrix);
+    floorMesh.setColorAt(i, (xi + zi) % 2 === 0 ? green : beige);
+  });
+  floorMesh.instanceMatrix.needsUpdate = true;
+  if (floorMesh.instanceColor) floorMesh.instanceColor.needsUpdate = true;
+  scene.add(floorMesh);
+
+  // Physics: build static ground body avoiding pits
+  groundBody = new CANNON.Body({ mass: 0, material: groundMat });
+  const H = TILE_H / 2;
+  const S = FLOOR_HALF;
+  if (pits.length === 0) {
+    groundBody.addShape(new CANNON.Box(new CANNON.Vec3(S, H, S)));
+  } else {
+    const p = pits[0];
+    const px1 = p.x - p.w / 2, px2 = p.x + p.w / 2;
+    const pz1 = p.z - p.d / 2, pz2 = p.z + p.d / 2;
+    const sections = [
+      [-S, px1, -S, S], [px2, S, -S, S],
+      [px1, px2, -S, pz1], [px1, px2, pz2, S],
+    ];
+    sections.forEach(([x1, x2, z1, z2]) => {
+      const w = (x2 - x1) / 2, d = (z2 - z1) / 2;
+      if (w <= 0 || d <= 0) return;
+      groundBody.addShape(
+        new CANNON.Box(new CANNON.Vec3(w, H, d)),
+        new CANNON.Vec3((x1 + x2) / 2, 0, (z1 + z2) / 2)
+      );
+    });
+  }
+  groundBody.position.set(0, -H, 0);
+  world.addBody(groundBody);
 }
-createFloor();
 
 // ── Raycaster ──
 const raycaster = new THREE.Raycaster();
@@ -218,11 +257,7 @@ world.addContactMaterial(new CANNON.ContactMaterial(groundMat, structureMat, {
   friction: 0.4,
 }));
 
-// Static ground plane
-const groundBody = new CANNON.Body({ mass: 0, material: groundMat });
-groundBody.addShape(new CANNON.Plane());
-groundBody.quaternion.setFromEuler(-Math.PI / 2, 0, 0);
-world.addBody(groundBody);
+let groundBody = null; // rebuilt per level
 
 let structureBody = null;  // cannon rigid body for the whole structure
 let _comLocal = new THREE.Vector3(); // COM in structure local space
@@ -790,16 +825,13 @@ function updateVerbTimers() {
       } else if (structureBody) {
         const dv = dirToVec(w.dir);
         const thrust = VERB_FORCE * structureBody.mass;
-        const force = new CANNON.Vec3(dv.x * thrust, 0, dv.z * thrust);
+        const worldForce = new CANNON.Vec3(dv.x * thrust, 0, dv.z * thrust);
         const wordCubes = cubes.filter(c => c.wordIdx === words.indexOf(w));
         if (wordCubes.length > 0) {
           const mid = wordCubes[Math.floor(wordCubes.length / 2)];
-          const localPt = new CANNON.Vec3(
-            mid.gx - _comLocal.x,
-            0.5 + (mid.gy || 0) - _comLocal.y,
-            mid.gz - _comLocal.z
-          );
-          structureBody.applyLocalForce(force, localPt);
+          const wp = cubeWorldPos(mid);
+          const worldPt = new CANNON.Vec3(wp.x, wp.y, wp.z);
+          structureBody.applyForce(worldForce, worldPt);
           if (w.arrowHelper) {
             const pulse = 1 + 0.3 * Math.sin(now * 20);
             w.arrowHelper.scale.set(pulse, pulse, pulse);
@@ -910,6 +942,10 @@ function startLevel() {
   if (structureBody) { world.removeBody(structureBody); structureBody = null; }
   for (const b of wallBodies) world.removeBody(b);
   wallBodies.length = 0;
+
+  // Build floor for this level (with pit cutouts where needed)
+  const levelPits = currentLevel === 4 ? [{ x: 7, z: 0, w: 4, d: 8 }] : [];
+  buildFloor(levelPits);
 
   // Starting word
   const word = getRandomWord();
@@ -1133,6 +1169,11 @@ function submitWord() {
   }
   if (!/^[A-Z]+$/.test(text)) {
     showMessage('Letters only!');
+    audio.error();
+    return;
+  }
+  if (!isValidWord(text)) {
+    showMessage(`"${text}" is not a valid word`);
     audio.error();
     return;
   }
@@ -1386,7 +1427,6 @@ function cubeWorldPos(c) {
   return local;
 }
 
-let lastCollisionTime = 0;
 
 // ── Physics update ──
 function updatePhysics(dt) {
@@ -1405,7 +1445,6 @@ function updatePhysics(dt) {
       if (Math.abs(wp.x - b.x) < b.hw && Math.abs(wp.z - b.z) < b.hd) {
         levelFalling = true;
         if (structureBody.position.y < -5) {
-          audio.collision();
           showMessage('Fell in the pit! Restarting...', '#ff6b6b');
           levelComplete = true;
           setTimeout(() => startLevel(), 1000);
@@ -1426,7 +1465,6 @@ function updatePhysics(dt) {
   if (!onPlatform) {
     levelFalling = true;
     if (structureBody.position.y < -5) {
-      audio.collision();
       showMessage('Fell off! Restarting...', '#ff6b6b');
       levelComplete = true;
       setTimeout(() => startLevel(), 1000);
@@ -1434,20 +1472,6 @@ function updatePhysics(dt) {
     }
     return;
   }
-
-  // ── Collision sound ──
-  const speed = Math.sqrt(
-    structureBody.velocity.x ** 2 +
-    structureBody.velocity.y ** 2 +
-    structureBody.velocity.z ** 2
-  );
-  structureBody.addEventListener('collide', () => {
-    const now = performance.now() / 1000;
-    if (speed > 2 && now - lastCollisionTime > 0.15) {
-      audio.collision();
-      lastCollisionTime = now;
-    }
-  });
 
   // ── Win check ──
   if (endZoneBox) {

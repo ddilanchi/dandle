@@ -93,6 +93,7 @@ const lastMouseWorld = new THREE.Vector3(); // mouse position on ground plane
 let selectedCube = null;
 let selectedHighlight = null;
 let levelComplete = false;
+let levelFalling = false;
 let structureGroup = new THREE.Group();
 scene.add(structureGroup);
 
@@ -105,7 +106,10 @@ const VERB_DELAY = 3; // seconds before verb activates
 
 let endZone = null;
 let endZoneBox = null;
+let endZoneY = 0; // y position of end zone (for elevated goals)
 let directionArrow = null; // blue arrow showing word placement direction
+let currentLevel = 1;
+const levelObstacles = []; // meshes added per level (walls, pits, platforms)
 
 // ── Animation queue ──
 const animations = [];  // { mesh, startTime, duration }
@@ -272,7 +276,8 @@ function dirFromMouse(cubeGx, cubeGz) {
 }
 
 // ── End zone ──
-function createEndZone(x, z, w, d) {
+function createEndZone(x, z, w, d, y = 0) {
+  endZoneY = y;
   const geo = new THREE.PlaneGeometry(w, d);
   const mat = new THREE.MeshStandardMaterial({
     color: 0xcc2222,
@@ -282,7 +287,7 @@ function createEndZone(x, z, w, d) {
   });
   endZone = new THREE.Mesh(geo, mat);
   endZone.rotation.x = -Math.PI / 2;
-  endZone.position.set(x, 0.01, z);
+  endZone.position.set(x, y + 0.01, z);
   scene.add(endZone);
 
   // pulsing border
@@ -290,14 +295,62 @@ function createEndZone(x, z, w, d) {
   const line = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0xff4444 }));
   line.rotation.x = -Math.PI / 2;
   line.position.copy(endZone.position);
-  line.position.y = 0.02;
+  line.position.y += 0.01;
   scene.add(line);
   endZone.userData.line = line;
 
   endZoneBox = new THREE.Box3().setFromCenterAndSize(
-    new THREE.Vector3(x, 0.5, z),
-    new THREE.Vector3(w, 1, d)
+    new THREE.Vector3(x, y + 0.5, z),
+    new THREE.Vector3(w, 2, d)
   );
+
+  // If elevated, add a glowing pillar beneath
+  if (y > 0) {
+    const pillarGeo = new THREE.BoxGeometry(w, y, d);
+    const pillarMat = new THREE.MeshStandardMaterial({
+      color: 0xcc2222, transparent: true, opacity: 0.15,
+    });
+    const pillar = new THREE.Mesh(pillarGeo, pillarMat);
+    pillar.position.set(x, y / 2, z);
+    scene.add(pillar);
+    levelObstacles.push(pillar);
+  }
+}
+
+// ── Level obstacles ──
+function addWall(x, z, w, h, d) {
+  const geo = new THREE.BoxGeometry(w, h, d);
+  const mat = new THREE.MeshStandardMaterial({ color: 0x666680 });
+  const wall = new THREE.Mesh(geo, mat);
+  wall.position.set(x, h / 2, z);
+  wall.castShadow = true;
+  wall.receiveShadow = true;
+  scene.add(wall);
+  levelObstacles.push(wall);
+  wall.userData.isWall = true;
+  return wall;
+}
+
+function addPit(x, z, w, d) {
+  // Dark hole in the floor
+  const geo = new THREE.PlaneGeometry(w, d);
+  const mat = new THREE.MeshStandardMaterial({ color: 0x111118, side: THREE.DoubleSide });
+  const pit = new THREE.Mesh(geo, mat);
+  pit.rotation.x = -Math.PI / 2;
+  pit.position.set(x, 0.005, z);
+  scene.add(pit);
+  levelObstacles.push(pit);
+  pit.userData.isPit = true;
+  pit.userData.bounds = { x, z, hw: w / 2, hd: d / 2 };
+
+  // Edges
+  const edgesGeo = new THREE.EdgesGeometry(geo);
+  const line = new THREE.LineSegments(edgesGeo, new THREE.LineBasicMaterial({ color: 0x333344 }));
+  line.rotation.x = -Math.PI / 2;
+  line.position.set(x, 0.006, z);
+  scene.add(line);
+  levelObstacles.push(line);
+  return pit;
 }
 
 // ── Selection highlight ──
@@ -436,48 +489,90 @@ function showMessage(text, color = '#ff6b6b') {
   msgTimeout = setTimeout(() => { messageEl.style.opacity = '0'; }, 2000);
 }
 
+// ── Score tracking ──
+let lettersUsed = 0;
+
 // ── Init level ──
 function startLevel() {
   // Clear previous
   while (structureGroup.children.length) {
-    const c = structureGroup.children[0];
-    structureGroup.remove(c);
+    structureGroup.remove(structureGroup.children[0]);
   }
   cubes.length = 0;
   words.length = 0;
   animations.length = 0;
   velocity.set(0, 0, 0);
   structureGroup.position.set(0, 0, 0);
+  structureGroup.position.y = 0;
   selectedCube = null;
   clearHighlight();
+  removeDirectionArrow();
   levelComplete = false;
+  levelFalling = false;
+  lettersUsed = 0;
   levelCompleteEl.classList.add('hidden');
   inputContainer.classList.add('hidden');
   selectedInfoEl.textContent = '';
 
+  // Remove old end zone
   if (endZone) {
     scene.remove(endZone);
     if (endZone.userData.line) scene.remove(endZone.userData.line);
+    endZone = null;
   }
+
+  // Remove old obstacles
+  for (const o of levelObstacles) scene.remove(o);
+  levelObstacles.length = 0;
 
   // Starting word
   const word = getRandomWord();
   const startX = -Math.floor(word.length / 2);
   placeWord(word, startX, 0, 'x+', 0);
-
-  // End zone - placed 10 units away in a random direction
-  const angle = Math.random() * Math.PI * 2;
-  const dist = 10;
-  const ezX = Math.round(Math.cos(angle) * dist);
-  const ezZ = Math.round(Math.sin(angle) * dist);
-  createEndZone(ezX, ezZ, 4, 4);
+  lettersUsed = word.length; // starter word counts
 
   // Camera target
   controls.target.set(0, 0, 0);
   camera.position.set(6, 8, 10);
 
-  levelInfoEl.textContent = 'Level 1';
-  hintEl.textContent = 'Build words with VERBS to push your structure into the red zone! Click a cube, type a word, mouse aims the direction.';
+  const LEVEL_HINTS = {
+    1: 'Push your structure into the red zone using VERBS!',
+    2: 'A wall blocks the way. Find a path around it!',
+    3: 'The goal is in the air! Build upward momentum!',
+    4: 'A pit separates you from the goal. Gain enough speed to cross!',
+  };
+
+  // ── Level configs ──
+  switch (currentLevel) {
+    case 1:
+      createEndZone(10, 0, 4, 4);
+      break;
+
+    case 2:
+      createEndZone(12, 0, 4, 4);
+      // Wall between start and goal
+      addWall(6, 0, 1, 3, 10);
+      break;
+
+    case 3:
+      // Goal is elevated
+      createEndZone(10, 0, 4, 4, 4);
+      break;
+
+    case 4:
+      createEndZone(14, 0, 4, 4);
+      // Pit between start and goal
+      addPit(7, 0, 4, 8);
+      break;
+
+    default:
+      // Beyond level 4, random layout
+      createEndZone(10, 0, 4, 4);
+      break;
+  }
+
+  levelInfoEl.textContent = `Level ${currentLevel}`;
+  hintEl.textContent = LEVEL_HINTS[currentLevel] || 'Reach the red zone!';
 }
 
 // ── Click handling ──
@@ -574,12 +669,16 @@ function submitWord() {
   }
 
   const wordIdx = words.length;
-  const { verb } = placeWord(text, startGx, startGz, dir, wordIdx, true);
+  const { placed, verb } = placeWord(text, startGx, startGz, dir, wordIdx, true);
+
+  // Count only newly placed letters (not shared ones that already existed)
+  const newLetters = placed.filter(c => c.wordIdx === wordIdx).length;
+  lettersUsed += newLetters;
 
   if (verb) {
-    showMessage(`VERB: "${text}" applies force!`, '#44ff44');
+    showMessage(`VERB: "${text}" applies force! (${lettersUsed} letters used)`, '#44ff44');
   } else {
-    showMessage(`Placed "${text}"`, '#aaddff');
+    showMessage(`Placed "${text}" (${lettersUsed} letters used)`, '#aaddff');
   }
 
   // Deselect
@@ -599,7 +698,8 @@ wordInput.addEventListener('keydown', (e) => {
 
 // ── Level complete handler ──
 window.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && levelComplete) {
+  if (e.key === 'Enter' && levelComplete && !levelFalling) {
+    currentLevel++;
     startLevel();
   }
 });
@@ -625,9 +725,59 @@ function updatePhysics(dt) {
   structureGroup.position.x += velocity.x * dt;
   structureGroup.position.z += velocity.z * dt;
 
-  // Check if structure has fallen off the platform edge
-  const floorEdge = 20;
+  // ── Wall collisions ──
   const sp = structureGroup.position;
+  for (const obs of levelObstacles) {
+    if (!obs.userData.isWall) continue;
+    const wallBox = new THREE.Box3().setFromObject(obs);
+    for (const c of cubes) {
+      const wx = c.mesh.position.x + sp.x;
+      const wz = c.mesh.position.z + sp.z;
+      const cubeBox = new THREE.Box3().setFromCenterAndSize(
+        new THREE.Vector3(wx, 0.5, wz),
+        new THREE.Vector3(0.94, 0.94, 0.94)
+      );
+      if (cubeBox.intersectsBox(wallBox)) {
+        // Bounce back
+        structureGroup.position.x -= velocity.x * dt * 2;
+        structureGroup.position.z -= velocity.z * dt * 2;
+        velocity.x *= -0.3;
+        velocity.z *= -0.3;
+        audio.collision();
+        break;
+      }
+    }
+  }
+
+  // ── Pit detection ──
+  for (const obs of levelObstacles) {
+    if (!obs.userData.isPit) continue;
+    const b = obs.userData.bounds;
+    let inPit = false;
+    for (const c of cubes) {
+      const wx = c.mesh.position.x + sp.x;
+      const wz = c.mesh.position.z + sp.z;
+      if (Math.abs(wx - b.x) < b.hw && Math.abs(wz - b.z) < b.hd) {
+        inPit = true;
+        break;
+      }
+    }
+    if (inPit) {
+      levelFalling = true;
+      structureGroup.position.y -= 8 * dt;
+      if (structureGroup.position.y < -5) {
+        audio.collision();
+        showMessage('Fell in the pit! Restarting...', '#ff6b6b');
+        levelComplete = true;
+        setTimeout(() => startLevel(), 1000);
+        return;
+      }
+      return;
+    }
+  }
+
+  // ── Check if structure has fallen off the platform edge ──
+  const floorEdge = 20;
   let onPlatform = false;
   for (const c of cubes) {
     const wx = Math.abs(c.mesh.position.x + sp.x);
@@ -638,27 +788,30 @@ function updatePhysics(dt) {
     }
   }
   if (!onPlatform && cubes.length > 0) {
-    // Structure is entirely off the platform - fall and restart
+    levelFalling = true;
     structureGroup.position.y -= 5 * dt;
     if (structureGroup.position.y < -5) {
       audio.collision();
       showMessage('Fell off! Restarting...', '#ff6b6b');
+      levelComplete = true;
       setTimeout(() => startLevel(), 1000);
-      levelComplete = true; // stop physics
       return;
     }
-    return; // skip win check while falling
+    return;
   }
 
-  // Check win - any cube in end zone?
+  // ── Check win - any cube in end zone? ──
   if (endZoneBox) {
-    const sp = structureGroup.position;
     for (const c of cubes) {
       const wx = c.mesh.position.x + sp.x;
       const wz = c.mesh.position.z + sp.z;
-      const p = new THREE.Vector3(wx, 0.5, wz);
+      const wy = c.mesh.position.y + sp.y;
+      const p = new THREE.Vector3(wx, wy, wz);
       if (endZoneBox.containsPoint(p)) {
         levelComplete = true;
+        levelCompleteEl.querySelector('h1').textContent = 'Level Complete!';
+        levelCompleteEl.querySelector('p').textContent =
+          `Letters used: ${lettersUsed} | Press ENTER for Level ${currentLevel + 1}`;
         levelCompleteEl.classList.remove('hidden');
         audio.levelComplete();
         return;

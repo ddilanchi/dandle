@@ -4,7 +4,7 @@ import * as CANNON from 'cannon-es';
 import { getRandomWord, isValidWord, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v2.0.7';
+const VERSION = 'v2.0.8';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -243,8 +243,7 @@ world.addContactMaterial(new CANNON.ContactMaterial(groundMat, structureMat, {
 }));
 
 let structureBody = null;  // cannon rigid body for the whole structure
-let _comLocal = new THREE.Vector3(); // anchor point in structure local space
-let _bodyAnchor = null; // fixed anchor = first cube's position, never changes until full rebuild
+let _comLocal = new THREE.Vector3(); // COM in structure local space
 const wallBodies = [];     // static cannon bodies for level walls
 
 let endZone = null;
@@ -303,20 +302,56 @@ function updateCubeGrowth() {
 
 // ── Cannon body management ──
 
-// Add a single cube's shape to the existing body (no rebuild)
+// Add a single cube's shape to the existing body (no rebuild).
+// After adding, rebalance so body.position stays at the true COM.
 function addCubeShape(cube) {
-  if (!structureBody || !_bodyAnchor) return;
+  if (!structureBody) return;
+
+  // Add shape at offset from current _comLocal
   const half = new CANNON.Vec3(0.47, 0.47, 0.47);
   const offset = new CANNON.Vec3(
-    cube.gx - _bodyAnchor.x,
-    (0.5 + (cube.gy || 0)) - _bodyAnchor.y,
-    cube.gz - _bodyAnchor.z
+    cube.gx - _comLocal.x,
+    (0.5 + (cube.gy || 0)) - _comLocal.y,
+    cube.gz - _comLocal.z
   );
   structureBody.addShape(new CANNON.Box(half), offset);
-  // Count non-growing cubes for mass
-  const solidCount = cubes.filter(c => c !== (_growingCube && _growingCube.cube)).length;
-  structureBody.mass = solidCount;
+
+  // Recompute true COM from all solid cubes
+  let cx = 0, cy = 0, cz = 0, count = 0;
+  for (const c of cubes) {
+    if (_growingCube && c === _growingCube.cube) continue;
+    cx += c.gx;
+    cy += 0.5 + (c.gy || 0);
+    cz += c.gz;
+    count++;
+  }
+  if (count === 0) return;
+  cx /= count; cy /= count; cz /= count;
+
+  // Delta from old COM to new COM (local/grid space)
+  const dx = cx - _comLocal.x;
+  const dy = cy - _comLocal.y;
+  const dz = cz - _comLocal.z;
+
+  // Shift all shape offsets by -delta (recentre around new COM)
+  for (const so of structureBody.shapeOffsets) {
+    so.x -= dx;
+    so.y -= dy;
+    so.z -= dz;
+  }
+
+  // Shift body.position by +delta in world space (rotated)
+  const worldDelta = new CANNON.Vec3(dx, dy, dz);
+  structureBody.quaternion.vmult(worldDelta, worldDelta);
+  structureBody.position.vadd(worldDelta, structureBody.position);
+
+  // Update COM tracking
+  _comLocal.set(cx, cy, cz);
+
+  // Update mass and bounds
+  structureBody.mass = count;
   structureBody.updateMassProperties();
+  structureBody.updateBoundingRadius();
 }
 
 function createStructureBody() {
@@ -324,13 +359,17 @@ function createStructureBody() {
   if (oldBody) world.removeBody(oldBody);
   structureBody = null;
 
-  if (cubes.length === 0) { _bodyAnchor = null; return; }
+  if (cubes.length === 0) return;
 
-  // Use fixed anchor = first cube's grid position (stable reference point)
-  const c0 = cubes[0];
-  const ax = c0.gx, ay = 0.5 + (c0.gy || 0), az = c0.gz;
-  _bodyAnchor = { x: ax, y: ay, z: az };
-  _comLocal.set(ax, ay, az);
+  // Compute COM from all cubes
+  let cx = 0, cy = 0, cz = 0;
+  for (const c of cubes) {
+    cx += c.gx;
+    cy += 0.5 + (c.gy || 0);
+    cz += c.gz;
+  }
+  cx /= cubes.length; cy /= cubes.length; cz /= cubes.length;
+  _comLocal.set(cx, cy, cz);
 
   const body = new CANNON.Body({
     mass: cubes.length,
@@ -342,20 +381,17 @@ function createStructureBody() {
 
   for (const c of cubes) {
     const half = new CANNON.Vec3(0.47, 0.47, 0.47);
-    const px = c.gx;
-    const py = 0.5 + (c.gy || 0);
-    const pz = c.gz;
     body.addShape(
       new CANNON.Box(half),
-      new CANNON.Vec3(px - ax, py - ay, pz - az)
+      new CANNON.Vec3(c.gx - cx, (0.5 + (c.gy || 0)) - cy, c.gz - cz)
     );
   }
 
-  // Anchor world position
-  const anchorWorld = _comLocal.clone()
+  // COM world position
+  const comWorld = _comLocal.clone()
     .applyQuaternion(structureGroup.quaternion)
     .add(structureGroup.position);
-  body.position.set(anchorWorld.x, anchorWorld.y, anchorWorld.z);
+  body.position.set(comWorld.x, comWorld.y, comWorld.z);
   body.quaternion.set(
     structureGroup.quaternion.x, structureGroup.quaternion.y,
     structureGroup.quaternion.z, structureGroup.quaternion.w

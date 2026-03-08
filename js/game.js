@@ -4,7 +4,7 @@ import * as CANNON from 'cannon-es';
 import { getRandomWord, isValidWord, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v2.1.0';
+const VERSION = 'v2.1.1';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -303,10 +303,26 @@ function updateCubeGrowth() {
 // ── Cannon body management ──
 
 // Add a single cube's shape to the existing body (no rebuild, no teleport).
-// Shapes accumulate at offsets from _comLocal. body.position stays put —
-// cannon-es handles off-centre mass via the inertia tensor.
+// Recomputes _comLocal from the body's ACTUAL world position so the offset
+// is always correct — even if the body drifted before being frozen.
 function addCubeShape(cube) {
   if (!structureBody) return;
+
+  // Reverse-engineer _comLocal from the body's actual world position.
+  // syncGroupFromBody does: groupPos = bodyPos - R * _comLocal
+  // so: _comLocal = R⁻¹ * (bodyPos - groupPos)
+  const q = new THREE.Quaternion(
+    structureBody.quaternion.x, structureBody.quaternion.y,
+    structureBody.quaternion.z, structureBody.quaternion.w
+  );
+  const qInv = q.clone().invert();
+  const actualCOM = new THREE.Vector3(
+    structureBody.position.x - structureGroup.position.x,
+    structureBody.position.y - structureGroup.position.y,
+    structureBody.position.z - structureGroup.position.z
+  ).applyQuaternion(qInv);
+  _comLocal.copy(actualCOM);
+
   const half = new CANNON.Vec3(0.47, 0.47, 0.47);
   const offset = new CANNON.Vec3(
     cube.gx - _comLocal.x,
@@ -314,7 +330,8 @@ function addCubeShape(cube) {
     cube.gz - _comLocal.z
   );
   structureBody.addShape(new CANNON.Box(half), offset);
-  // Count non-growing cubes for mass
+
+  // Update mass (count non-growing cubes)
   const solidCount = cubes.filter(c => c !== (_growingCube && _growingCube.cube)).length;
   structureBody.mass = solidCount;
   structureBody.updateMassProperties();
@@ -1861,15 +1878,20 @@ function cubeWorldPos(c) {
 function updatePhysics(dt) {
   if (levelComplete || !structureBody) return;
 
-  // Freeze structure during letter placement so the body doesn't drift/rotate.
-  // addCubeShape computes offsets from grid coords, which assume the body
-  // hasn't moved since the last createStructureBody. If we let physics run,
-  // the body settles/rotates and the new shape ends up overlapping the ground.
-  if (_placementQueue || _growingCube) {
+  // Make structure STATIC during letter placement — STATIC bodies don't
+  // integrate at all, so zero drift/rotation. Restored to DYNAMIC when done.
+  const isPlacing = !!(_placementQueue || _growingCube);
+  if (isPlacing && structureBody.type !== CANNON.Body.STATIC) {
+    structureBody.type = CANNON.Body.STATIC;
+    structureBody.mass = 0;
     structureBody.velocity.setZero();
     structureBody.angularVelocity.setZero();
-    structureBody.force.setZero();
-    structureBody.torque.setZero();
+    structureBody.updateMassProperties();
+  } else if (!isPlacing && structureBody.type === CANNON.Body.STATIC) {
+    const solidCount = cubes.length;
+    structureBody.type = CANNON.Body.DYNAMIC;
+    structureBody.mass = solidCount;
+    structureBody.updateMassProperties();
   }
 
   // Step cannon world

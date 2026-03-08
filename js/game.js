@@ -4,7 +4,7 @@ import * as CANNON from 'cannon-es';
 import { getRandomWord, isValidWord, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v2.0.4';
+const VERSION = 'v2.0.5';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -317,9 +317,19 @@ function createStructureBody() {
 
   if (cubes.length === 0) return;
 
-  // Compute COM in local space
+  // Compute COM in local space (use animated position for growing cubes)
   let cx = 0, cy = 0, cz = 0;
-  for (const c of cubes) { cx += c.gx; cy += 0.5 + (c.gy || 0); cz += c.gz; }
+  for (const c of cubes) {
+    if (c._physScale) {
+      cx += c.mesh.position.x;
+      cy += c.mesh.position.y;
+      cz += c.mesh.position.z;
+    } else {
+      cx += c.gx;
+      cy += 0.5 + (c.gy || 0);
+      cz += c.gz;
+    }
+  }
   cx /= cubes.length; cy /= cubes.length; cz /= cubes.length;
   _comLocal.set(cx, cy, cz);
 
@@ -333,9 +343,13 @@ function createStructureBody() {
   for (const c of cubes) {
     const h = c._physScale || 0.47;
     const half = new CANNON.Vec3(h, h, h);
+    // For growing cubes, use mesh's current animated position, not final grid pos
+    const px = c._physScale ? c.mesh.position.x : c.gx;
+    const py = c._physScale ? c.mesh.position.y : (0.5 + (c.gy || 0));
+    const pz = c._physScale ? c.mesh.position.z : c.gz;
     body.addShape(
       new CANNON.Box(half),
-      new CANNON.Vec3(c.gx - cx, 0.5 + (c.gy || 0) - cy, c.gz - cz)
+      new CANNON.Vec3(px - cx, py - cy, pz - cz)
     );
   }
 

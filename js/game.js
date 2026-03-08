@@ -4,7 +4,7 @@ import * as CANNON from 'cannon-es';
 import { getRandomWord, isValidWord, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v2.0.5';
+const VERSION = 'v2.0.6';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -333,8 +333,12 @@ function createStructureBody() {
   cx /= cubes.length; cy /= cubes.length; cz /= cubes.length;
   _comLocal.set(cx, cy, cz);
 
+  // During cube growth, make body kinematic so the solver can't launch it.
+  // The structure freezes in place while letters grow, then resumes physics.
+  const isGrowing = !!_growingCube;
   const body = new CANNON.Body({
-    mass: cubes.length,
+    mass: isGrowing ? 0 : cubes.length,
+    type: isGrowing ? CANNON.Body.KINEMATIC : CANNON.Body.DYNAMIC,
     material: structureMat,
     linearDamping: 0.05,
     angularDamping: 0.05,
@@ -609,28 +613,10 @@ function _placeNextLetter() {
   cube._physScale = 0.01;
   cubes.push(cube);
 
-  // Fade out the ghost at this position
-  const now = performance.now() / 1000;
-  const matchingGhost = _ghostMeshes.find(g =>
-    Math.round(g.position.x) === l.gx &&
-    Math.round(g.position.z) === l.gz &&
-    Math.round(g.position.y - 0.5) === l.gy
-  );
-  if (matchingGhost) {
-    animations.push({
-      mesh: matchingGhost,
-      startTime: now,
-      duration: BLOCK_ANIM_DURATION * 0.6,
-      isFadeOut: true,
-      soundPlayed: true,
-      onComplete: () => {
-        structureGroup.remove(matchingGhost);
-        const gi = _ghostMeshes.indexOf(matchingGhost);
-        if (gi !== -1) _ghostMeshes.splice(gi, 1);
-      },
-    });
-  }
+  // Clear all ghosts on first letter (no per-ghost fade to avoid z-fighting)
+  if (q.index === 0) clearGhosts();
 
+  const now = performance.now() / 1000;
   audio.pop(q.index);
 
   // Start unified growth — updateCubeGrowth() handles position, scale,

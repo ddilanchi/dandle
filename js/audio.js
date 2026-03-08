@@ -277,6 +277,7 @@ export class AudioManager {
     329.63, // E4 - Level 3
     349.23, // F4 - Level 4
     392.00, // G4 - Level 5
+    440.00, // A4 - Level 6
     261.63, // fallback
   ];
 
@@ -349,6 +350,94 @@ export class AudioManager {
     if (pos === 0) this._playMelody(time, 'chord');
     else if (pos === 2) this._playMelody(time, 'run');
     else if (Math.random() > 0.65) this._playMelody(time, 'fill');
+    // Mellow drums
+    this._playDrums(time, beat);
+  }
+
+  _playDrums(time, beat) {
+    const pos = beat % 4;
+    const bd = this._getBeatDur();
+
+    // Soft kick on 1 and 3
+    if (pos === 0 || pos === 2) {
+      const o = this.ctx.createOscillator();
+      const g = this.ctx.createGain();
+      o.type = 'sine';
+      o.frequency.setValueAtTime(65, time);
+      o.frequency.exponentialRampToValueAtTime(30, time + 0.12);
+      g.gain.setValueAtTime(0.18, time);
+      g.gain.exponentialRampToValueAtTime(0.001, time + 0.15);
+      o.connect(g).connect(this._musicGain);
+      o.start(time); o.stop(time + 0.15);
+    }
+
+    // Soft snare/brush on 2 and 4
+    if (pos === 1 || pos === 3) {
+      // Noise burst with bandpass for brush feel
+      const len = Math.ceil(this.ctx.sampleRate * 0.08);
+      const buf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
+      const data = buf.getChannelData(0);
+      for (let i = 0; i < len; i++) {
+        data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (this.ctx.sampleRate * 0.025));
+      }
+      const n = this.ctx.createBufferSource();
+      n.buffer = buf;
+      const f = this.ctx.createBiquadFilter();
+      f.type = 'bandpass';
+      f.frequency.value = 3000;
+      f.Q.value = 0.8;
+      const g = this.ctx.createGain();
+      g.gain.setValueAtTime(0.09, time);
+      g.gain.exponentialRampToValueAtTime(0.001, time + 0.08);
+      n.connect(f).connect(g).connect(this._musicGain);
+      n.start(time);
+
+      // Tiny body tone under the snare
+      const o = this.ctx.createOscillator();
+      const og = this.ctx.createGain();
+      o.type = 'sine';
+      o.frequency.setValueAtTime(180, time);
+      o.frequency.exponentialRampToValueAtTime(120, time + 0.05);
+      og.gain.setValueAtTime(0.07, time);
+      og.gain.exponentialRampToValueAtTime(0.001, time + 0.06);
+      o.connect(og).connect(this._musicGain);
+      o.start(time); o.stop(time + 0.06);
+    }
+
+    // Gentle hi-hat on every beat (and occasional off-beat)
+    const hatLen = Math.ceil(this.ctx.sampleRate * 0.03);
+    const hatBuf = this.ctx.createBuffer(1, hatLen, this.ctx.sampleRate);
+    const hatData = hatBuf.getChannelData(0);
+    for (let i = 0; i < hatLen; i++) {
+      hatData[i] = (Math.random() * 2 - 1) * Math.exp(-i / (this.ctx.sampleRate * 0.008));
+    }
+    const hat = this.ctx.createBufferSource();
+    hat.buffer = hatBuf;
+    const hf = this.ctx.createBiquadFilter();
+    hf.type = 'highpass';
+    hf.frequency.value = 7000;
+    const hg = this.ctx.createGain();
+    hg.gain.setValueAtTime(0.04, time);
+    hg.gain.exponentialRampToValueAtTime(0.001, time + 0.03);
+    hat.connect(hf).connect(hg).connect(this._musicGain);
+    hat.start(time);
+
+    // Off-beat hat (swung 8th note feel)
+    if (Math.random() > 0.4) {
+      const offTime = time + bd * 0.6;
+      const hat2 = this.ctx.createBufferSource();
+      hat2.buffer = hatBuf;
+      const hg2 = this.ctx.createGain();
+      hg2.gain.setValueAtTime(0.025, offTime);
+      hg2.gain.exponentialRampToValueAtTime(0.001, offTime + 0.025);
+      hat2.connect(hf.context === this.ctx ? this.ctx.createBiquadFilter() : hf);
+      // Create fresh filter for second hat
+      const hf2 = this.ctx.createBiquadFilter();
+      hf2.type = 'highpass';
+      hf2.frequency.value = 7000;
+      hat2.connect(hf2).connect(hg2).connect(this._musicGain);
+      hat2.start(offTime);
+    }
   }
 
   _playWalkingBass(time, beat) {

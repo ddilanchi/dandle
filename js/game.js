@@ -4,7 +4,7 @@ import * as CANNON from 'cannon-es';
 import { getRandomWord, isVerb, getWordTypes, isValidWord, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v1.6.1';
+const VERSION = 'v1.6.2';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -232,7 +232,7 @@ scene.add(structureGroup);
 
 const cubes = [];       // { letter, gx, gy, gz, mesh, wordIdx }
 const words = [];       // { text, dir, isVerb, arrowHelper }
-const VERB_FORCE = 8;   // force per letter (applied each physics substep)
+const VERB_FORCE = 15;  // force per letter (applied each physics substep)
 const VERB_DELAY = 3;   // seconds before verb activates
 const GRAVITY = 20;
 
@@ -258,7 +258,10 @@ world.addEventListener('preStep', () => {
     if (elapsed >= w.thrustDuration) continue;
     const dv = dirToVec(w.dir);
     const thrust = VERB_FORCE * w.text.length;
-    const worldForce = new CANNON.Vec3(dv.x * thrust, 0, dv.z * thrust);
+    // Transform force direction from local structure space to world space
+    const bq = structureBody.quaternion;
+    const localForce = new CANNON.Vec3(dv.x * thrust, (dv.y || 0) * thrust, dv.z * thrust);
+    const worldForce = bq.vmult(localForce);
     structureBody.applyForce(worldForce, structureBody.position);
   }
 });
@@ -469,16 +472,27 @@ function placeWord(text, startGx, startGz, dir, wordIdx, animated = false, start
   const verb = forceVerb !== null ? forceVerb : isVerb(text);
   const dirVec = dirToVec(dir);
 
+  // Compute ALL positions this word covers (including overlaps)
+  const allPositions = [];
+  for (let i = 0; i < text.length; i++) {
+    allPositions.push({
+      gx: startGx + dirVec.x * i,
+      gy: startGy + (dirVec.y || 0) * i,
+      gz: startGz + dirVec.z * i,
+    });
+  }
+
   const wordEntry = {
     text, dir, isVerb: verb, length: text.length, arrowHelper: null,
     active: !verb,
     activateAt: verb ? performance.now() / 1000 + VERB_DELAY : 0,
     thrustActive: false, thrustStart: 0, thrustDuration: 0,
     timerSprite: null,
+    positions: allPositions,
   };
   words.push(wordEntry);
 
-  // Build list of letters to place
+  // Build list of letters to place (skip existing)
   const letters = [];
   for (let i = 0; i < text.length; i++) {
     const gx = startGx + dirVec.x * i;
@@ -1024,21 +1038,33 @@ function deleteWord(wordIdx) {
   if (w.arrowHelper) structureGroup.remove(w.arrowHelper);
   if (w.timerSprite) structureGroup.remove(w.timerSprite);
 
-  // Find cubes that belong ONLY to this word (not shared with another word)
+  // Build set of positions covered by ALL OTHER active words (using stored positions)
+  const protectedPositions = new Set();
+  for (let wi = 0; wi < words.length; wi++) {
+    if (wi === wordIdx || words[wi]._deleted) continue;
+    const ow = words[wi];
+    if (!ow.positions) continue;
+    for (const p of ow.positions) {
+      protectedPositions.add(`${p.gx},${p.gy},${p.gz}`);
+    }
+  }
+
+  // Find cubes at positions this word covers that are NOT protected by another word
+  const thisWordPositions = new Set();
+  if (w.positions) {
+    for (const p of w.positions) thisWordPositions.add(`${p.gx},${p.gy},${p.gz}`);
+  }
+
   const toDetach = [];
-  for (let i = cubes.length - 1; i >= 0; i--) {
-    const c = cubes[i];
-    if (c.wordIdx !== wordIdx) continue;
-    const shared = cubes.some((other, oi) =>
-      oi !== i && other.gx === c.gx && other.gz === c.gz && (other.gy || 0) === (c.gy || 0)
-    );
-    if (shared) continue;
-    toDetach.push(c);
+  for (const c of cubes) {
+    const key = `${c.gx},${c.gy || 0},${c.gz}`;
+    if (thisWordPositions.has(key) && !protectedPositions.has(key)) {
+      toDetach.push(c);
+    }
   }
 
   // Turn deleted cubes into debris immediately
   if (toDetach.length > 0) {
-    // Clear selection if it's being detached
     if (selectedCube && toDetach.includes(selectedCube)) {
       selectedCube = null;
       clearHighlight();
@@ -1049,7 +1075,7 @@ function deleteWord(wordIdx) {
     _spawnDebris(toDetach);
   }
 
-  // Now check remaining cubes for disconnected components
+  // Check remaining cubes for disconnected components
   if (cubes.length === 0) return;
   const components = _findComponents(cubes);
   if (components.length <= 1) {

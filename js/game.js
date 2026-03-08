@@ -4,7 +4,7 @@ import * as CANNON from 'cannon-es';
 import { getRandomWord, isValidWord, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v2.0.9';
+const VERSION = 'v2.1.0';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -1860,6 +1860,17 @@ function cubeWorldPos(c) {
 // ── Physics update ──
 function updatePhysics(dt) {
   if (levelComplete || !structureBody) return;
+
+  // Freeze structure during letter placement so the body doesn't drift/rotate.
+  // addCubeShape computes offsets from grid coords, which assume the body
+  // hasn't moved since the last createStructureBody. If we let physics run,
+  // the body settles/rotates and the new shape ends up overlapping the ground.
+  if (_placementQueue || _growingCube) {
+    structureBody.velocity.setZero();
+    structureBody.angularVelocity.setZero();
+    structureBody.force.setZero();
+    structureBody.torque.setZero();
+  }
 
   // Step cannon world
   world.step(1 / 120, dt, 5);

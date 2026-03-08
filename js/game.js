@@ -257,7 +257,7 @@ const debrisPieces = [];   // { group, body, cubes } — detached grey fragments
 
 // ── Animation queue ──
 const animations = [];  // { mesh, startTime, duration }
-const BLOCK_ANIM_DURATION = 0.25; // seconds per block scale-in
+const BLOCK_ANIM_DURATION = 0.35; // seconds per block slide-out
 
 // ── Sequential letter placement queue ──
 let _placementQueue = null;
@@ -526,9 +526,15 @@ function _placeNextLetter() {
   const l = q.letters[q.index];
   const mesh = makeLetterMesh(l.letter);
 
-  // Materialize at final grid position — no sliding
-  mesh.position.set(l.gx, 0.5 + l.gy, l.gz);
-  mesh.scale.set(0, 0, 0);
+  // Start inside the previous letter and slide out to target
+  const prev = q.index > 0 ? q.letters[q.index - 1] : null;
+  const fromX = prev ? prev.gx : (l.gx - q.dirVec.x);
+  const fromY = prev ? (0.5 + prev.gy) : (0.5 + l.gy);
+  const fromZ = prev ? prev.gz : (l.gz - q.dirVec.z);
+  const toX = l.gx, toY = 0.5 + l.gy, toZ = l.gz;
+
+  mesh.position.set(fromX, fromY, fromZ);
+  mesh.scale.set(0.01, 0.01, 0.01); // start tiny inside parent
 
   structureGroup.add(mesh);
   const cube = { letter: l.letter, gx: l.gx, gy: l.gy, gz: l.gz, mesh, wordIdx: l.wordIdx };
@@ -546,7 +552,7 @@ function _placeNextLetter() {
     animations.push({
       mesh: matchingGhost,
       startTime: now,
-      duration: BLOCK_ANIM_DURATION * 0.5,
+      duration: BLOCK_ANIM_DURATION * 0.6,
       isFadeOut: true,
       soundPlayed: true,
       onComplete: () => {
@@ -564,8 +570,11 @@ function _placeNextLetter() {
     duration: BLOCK_ANIM_DURATION,
     soundIndex: q.index,
     soundPlayed: true,
-    isMaterialize: true,
+    isSlideGrow: true,
+    fromX, fromY, fromZ,
+    toX, toY, toZ,
     onComplete: () => {
+      mesh.position.set(toX, toY, toZ);
       mesh.scale.set(1, 1, 1);
       createStructureBody();
       q.index++;
@@ -614,15 +623,21 @@ function updateAnimations() {
         if (ci !== -1) cubes.splice(ci, 1);
         animations.splice(i, 1);
       }
-    } else if (a.isMaterialize) {
-      // Scale in with slight overshoot
-      const ease = t < 1 ? 1 - Math.pow(1 - t, 3) : 1;
+    } else if (a.isSlideGrow) {
+      // Slide from previous letter position while growing from tiny to full size
+      const ease = t < 1 ? 1 - Math.pow(1 - t, 3) : 1; // ease-out cubic
+      // Position: lerp from source to target
+      a.mesh.position.set(
+        a.fromX + (a.toX - a.fromX) * ease,
+        a.fromY + (a.toY - a.fromY) * ease,
+        a.fromZ + (a.toZ - a.fromZ) * ease,
+      );
+      // Scale: grow from tiny to full, slight overshoot at end
       const s = t < 0.85
         ? ease
-        : 1 + Math.sin((t - 0.85) / 0.15 * Math.PI) * 0.06;
+        : 1 + Math.sin((t - 0.85) / 0.15 * Math.PI) * 0.04;
       a.mesh.scale.set(s, s, s);
       if (t >= 1) {
-        a.mesh.scale.set(1, 1, 1);
         animations.splice(i, 1);
         if (a.onComplete) a.onComplete();
       }

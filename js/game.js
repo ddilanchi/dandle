@@ -4,7 +4,7 @@ import * as CANNON from 'cannon-es';
 import { getRandomWord, isValidWord, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v2.0.2';
+const VERSION = 'v2.0.3';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -262,6 +262,36 @@ const BLOCK_ANIM_DURATION = 0.35; // seconds per block slide-out
 // ── Sequential letter placement queue ──
 let _placementQueue = null;
 
+// ── Physics growth system ──
+const PHYSICS_GROW_DURATION = 0.3; // seconds to grow physics box to full size
+const PHYSICS_GROW_STEPS = 6;      // rebuild body this many times during growth
+let _growingCubes = [];
+
+function updatePhysicsGrowth() {
+  if (_growingCubes.length === 0) return;
+  const now = performance.now() / 1000;
+  let needsRebuild = false;
+  for (let i = _growingCubes.length - 1; i >= 0; i--) {
+    const gc = _growingCubes[i];
+    const elapsed = now - gc.growStart;
+    const t = Math.min(elapsed / PHYSICS_GROW_DURATION, 1);
+    const newScale = 0.05 + 0.42 * t; // 0.05 → 0.47
+    // Only rebuild at discrete steps to avoid rebuilding every frame
+    const step = Math.floor(t * PHYSICS_GROW_STEPS);
+    if (step > gc.lastStep || t >= 1) {
+      gc.cube._physScale = newScale;
+      gc.lastStep = step;
+      needsRebuild = true;
+      if (t >= 1) {
+        gc.cube._physScale = 0.47;
+        delete gc.cube._physScale; // use default from now on
+        _growingCubes.splice(i, 1);
+      }
+    }
+  }
+  if (needsRebuild) createStructureBody();
+}
+
 // ── Cannon body management ──
 function createStructureBody() {
   const oldBody = structureBody;
@@ -283,8 +313,9 @@ function createStructureBody() {
     angularDamping: 0.05,
   });
 
-  const half = new CANNON.Vec3(0.47, 0.47, 0.47);
   for (const c of cubes) {
+    const h = c._physScale || 0.47;
+    const half = new CANNON.Vec3(h, h, h);
     body.addShape(
       new CANNON.Box(half),
       new CANNON.Vec3(c.gx - cx, 0.5 + (c.gy || 0) - cy, c.gz - cz)
@@ -504,9 +535,12 @@ function _placeNextLetter() {
   if (!q.pendingCubes) q.pendingCubes = [];
 
   if (q.index >= q.letters.length) {
-    // All letters animated — now add them all to physics at once
+    // All letters animated — add them with tiny physics boxes that grow
+    const now2 = performance.now() / 1000;
     for (const pc of q.pendingCubes) {
+      pc._physScale = 0.05; // start tiny
       cubes.push(pc);
+      _growingCubes.push({ cube: pc, growStart: now2, lastStep: -1 });
     }
     createStructureBody();
 
@@ -1934,6 +1968,7 @@ function animate() {
 
   if (!paused) {
     updateAnimations();
+    updatePhysicsGrowth();
     updateLetterZones();
     updateDirectionArrow();
     audio.setMusicIntensity(cubes.length);

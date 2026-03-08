@@ -1,10 +1,10 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import * as CANNON from 'cannon-es';
-import { getRandomWord, isVerb, getWordTypes, isValidWord, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
+import { getRandomWord, isValidWord, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v1.6.2';
+const VERSION = 'v2.0.0';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -16,7 +16,6 @@ const inputContainer = document.getElementById('word-input-container');
 const wordInput = document.getElementById('word-input');
 const submitBtn = document.getElementById('submit-word');
 const messageEl = document.getElementById('message');
-const verbLegend = document.getElementById('verb-legend');
 const levelCompleteEl = document.getElementById('level-complete');
 
 // Set version in both places from single source
@@ -26,9 +25,6 @@ const introScreen = document.getElementById('intro-screen');
 const pauseScreen = document.getElementById('pause-screen');
 const levelSelectEl = document.getElementById('level-select');
 const levelGridEl = document.getElementById('level-grid');
-const typeSpinner = document.getElementById('type-spinner');
-const spinnerWord = document.getElementById('spinner-word');
-const spinnerType = document.getElementById('spinner-type');
 let gameStarted = false;
 let paused = false;
 
@@ -231,9 +227,7 @@ let structureGroup = new THREE.Group();
 scene.add(structureGroup);
 
 const cubes = [];       // { letter, gx, gy, gz, mesh, wordIdx }
-const words = [];       // { text, dir, isVerb, arrowHelper }
-const VERB_FORCE = 15;  // force per letter (applied each physics substep)
-const VERB_DELAY = 3;   // seconds before verb activates
+const words = [];       // { text, dir, positions }
 const GRAVITY = 20;
 
 // ── Cannon physics world ──
@@ -247,24 +241,6 @@ world.addContactMaterial(new CANNON.ContactMaterial(groundMat, structureMat, {
   restitution: 0.05,
   friction: 0.02,
 }));
-
-// Apply verb forces once per physics substep for consistency
-world.addEventListener('preStep', () => {
-  if (!structureBody || levelComplete) return;
-  const now = performance.now() / 1000;
-  for (const w of words) {
-    if (!w.isVerb || w._deleted || !w.thrustActive) continue;
-    const elapsed = now - w.thrustStart;
-    if (elapsed >= w.thrustDuration) continue;
-    const dv = dirToVec(w.dir);
-    const thrust = VERB_FORCE * w.text.length;
-    // Transform force direction from local structure space to world space
-    const bq = structureBody.quaternion;
-    const localForce = new CANNON.Vec3(dv.x * thrust, (dv.y || 0) * thrust, dv.z * thrust);
-    const worldForce = bq.vmult(localForce);
-    structureBody.applyForce(worldForce, structureBody.position);
-  }
-});
 
 let structureBody = null;  // cannon rigid body for the whole structure
 let _comLocal = new THREE.Vector3(); // COM in structure local space
@@ -352,19 +328,19 @@ function syncGroupFromBody() {
 }
 
 // ── Create letter cube mesh ──
-function makeLetterMesh(letter, isVerbCube) {
+function makeLetterMesh(letter) {
   const mats = [];
   for (let i = 0; i < 6; i++) {
     const c = document.createElement('canvas');
     c.width = 128;
     c.height = 128;
     const ctx = c.getContext('2d');
-    ctx.fillStyle = isVerbCube ? '#ffe0d0' : '#f5ecd7';
+    ctx.fillStyle = '#f5ecd7';
     ctx.fillRect(0, 0, 128, 128);
-    ctx.strokeStyle = isVerbCube ? '#cc4444' : '#999';
+    ctx.strokeStyle = '#999';
     ctx.lineWidth = 4;
     ctx.strokeRect(2, 2, 124, 124);
-    ctx.fillStyle = isVerbCube ? '#aa2222' : '#222';
+    ctx.fillStyle = '#222';
     ctx.font = 'bold 78px Arial';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -468,8 +444,7 @@ function updateGhostPreview() {
 // ── Place a word in the structure ──
 // When animated=true, cubes are queued and placed one at a time.
 // When animated=false, all cubes placed instantly (used for starter word).
-function placeWord(text, startGx, startGz, dir, wordIdx, animated = false, startGy = 0, forceVerb = null) {
-  const verb = forceVerb !== null ? forceVerb : isVerb(text);
+function placeWord(text, startGx, startGz, dir, wordIdx, animated = false, startGy = 0) {
   const dirVec = dirToVec(dir);
 
   // Compute ALL positions this word covers (including overlaps)
@@ -482,14 +457,7 @@ function placeWord(text, startGx, startGz, dir, wordIdx, animated = false, start
     });
   }
 
-  const wordEntry = {
-    text, dir, isVerb: verb, length: text.length, arrowHelper: null,
-    active: !verb,
-    activateAt: verb ? performance.now() / 1000 + VERB_DELAY : 0,
-    thrustActive: false, thrustStart: 0, thrustDuration: 0,
-    timerSprite: null,
-    positions: allPositions,
-  };
+  const wordEntry = { text, dir, positions: allPositions, _deleted: false };
   words.push(wordEntry);
 
   // Build list of letters to place (skip existing)
@@ -500,28 +468,26 @@ function placeWord(text, startGx, startGz, dir, wordIdx, animated = false, start
     const gz = startGz + dirVec.z * i;
     const existing = cubes.find(c => c.gx === gx && c.gy === gy && c.gz === gz);
     if (existing) continue; // already placed, skip
-    letters.push({ letter: text[i], gx, gy, gz, verb, wordIdx });
+    letters.push({ letter: text[i], gx, gy, gz, wordIdx });
   }
 
   if (!animated) {
     // Instant placement (starter word)
     for (const l of letters) {
-      const mesh = makeLetterMesh(l.letter, l.verb);
+      const mesh = makeLetterMesh(l.letter);
       mesh.position.set(l.gx, 0.5 + l.gy, l.gz);
       structureGroup.add(mesh);
       const cube = { letter: l.letter, gx: l.gx, gy: l.gy, gz: l.gz, mesh, wordIdx };
       mesh.userData.cube = cube;
       cubes.push(cube);
     }
-    _addVerbArrow(wordEntry, dirVec, text, wordIdx);
-    return { verb };
+    return;
   }
 
   // Animated: queue letters for sequential placement
   _placementQueue = {
     letters,
     index: 0,
-    wordEntry,
     dirVec,
     text,
     wordIdx,
@@ -530,14 +496,12 @@ function placeWord(text, startGx, startGz, dir, wordIdx, animated = false, start
     startGz,
   };
   _placeNextLetter(); // start first one immediately
-  return { verb };
 }
 
 function _placeNextLetter() {
   if (!_placementQueue) return;
   const q = _placementQueue;
   if (q.index >= q.letters.length) {
-    _addVerbArrow(q.wordEntry, q.dirVec, q.text, q.wordIdx);
     _placementQueue = null;
     clearGhosts();
     // Select the last letter of the word
@@ -560,7 +524,7 @@ function _placeNextLetter() {
   }
 
   const l = q.letters[q.index];
-  const mesh = makeLetterMesh(l.letter, l.verb);
+  const mesh = makeLetterMesh(l.letter);
 
   // Materialize at final grid position — no sliding
   mesh.position.set(l.gx, 0.5 + l.gy, l.gz);
@@ -622,40 +586,11 @@ function _arrowAlwaysOnTop(arrow) {
   });
 }
 
-function _addVerbArrow(wordEntry, dirVec, text, wordIdx) {
-  if (!wordEntry.isVerb) return;
-  const arrowDir = new THREE.Vector3(dirVec.x, 0, dirVec.z).normalize();
-  const midIdx = Math.floor(text.length / 2);
-  const wordCubes = cubes.filter(c => c.wordIdx === wordIdx);
-  const midCube = wordCubes[Math.min(midIdx, wordCubes.length - 1)];
-  if (!midCube) return;
-  const origin = new THREE.Vector3(midCube.gx, 1.5 + (midCube.gy || 0), midCube.gz);
-  const arrow = new THREE.ArrowHelper(arrowDir, origin, 2, 0xff2222, 0.5, 0.3);
-  _arrowAlwaysOnTop(arrow);
-  arrow.visible = false;
-  structureGroup.add(arrow);
-  wordEntry.arrowHelper = arrow;
-  verbLegend.classList.remove('hidden');
-}
-
 // ── Tick animations ──
 function updateAnimations() {
   const now = performance.now() / 1000;
   for (let i = animations.length - 1; i >= 0; i--) {
     const a = animations[i];
-
-    // Arrow reveal entries
-    if (a.isArrowReveal) {
-      if (now >= a.revealTime) {
-        a.arrow.visible = true;
-        if (!a.soundPlayed) {
-          audio.verb();
-          a.soundPlayed = true;
-        }
-        animations.splice(i, 1);
-      }
-      continue;
-    }
 
     // Block scale-in or shrink-out
     if (now < a.startTime) continue;
@@ -1034,10 +969,6 @@ function deleteWord(wordIdx) {
   if (!w || w._deleted) return;
   w._deleted = true;
 
-  // Remove arrow and timer
-  if (w.arrowHelper) structureGroup.remove(w.arrowHelper);
-  if (w.timerSprite) structureGroup.remove(w.timerSprite);
-
   // Build set of positions covered by ALL OTHER active words (using stored positions)
   const protectedPositions = new Set();
   for (let wi = 0; wi < words.length; wi++) {
@@ -1147,95 +1078,6 @@ function clearHighlight() {
 }
 
 // ── Verb countdown timer sprite ──
-function createTimerSprite() {
-  const canvas = document.createElement('canvas');
-  canvas.width = 128;
-  canvas.height = 128;
-  const tex = new THREE.CanvasTexture(canvas);
-  const mat = new THREE.SpriteMaterial({ map: tex, transparent: true });
-  const sprite = new THREE.Sprite(mat);
-  sprite.scale.set(1, 1, 1);
-  sprite.userData.canvas = canvas;
-  sprite.userData.texture = tex;
-  return sprite;
-}
-
-function updateTimerSprite(sprite, remaining, total) {
-  const canvas = sprite.userData.canvas;
-  const ctx = canvas.getContext('2d');
-  const cx = 64, cy = 64, r = 50;
-  ctx.clearRect(0, 0, 128, 128);
-
-  // Background circle
-  ctx.beginPath();
-  ctx.arc(cx, cy, r, 0, Math.PI * 2);
-  ctx.fillStyle = 'rgba(0,0,0,0.5)';
-  ctx.fill();
-
-  // Progress arc (fills up as timer counts down)
-  const progress = 1 - remaining / total;
-  ctx.beginPath();
-  ctx.moveTo(cx, cy);
-  ctx.arc(cx, cy, r - 2, -Math.PI / 2, -Math.PI / 2 + progress * Math.PI * 2);
-  ctx.closePath();
-  ctx.fillStyle = remaining > 1 ? '#ff4444' : '#ff8844';
-  ctx.fill();
-
-  // Center text
-  const sec = Math.ceil(remaining);
-  ctx.fillStyle = '#fff';
-  ctx.font = 'bold 40px Arial';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(sec > 0 ? String(sec) : '!', cx, cy);
-
-  sprite.userData.texture.needsUpdate = true;
-}
-
-function updateVerbTimers() {
-  const now = performance.now() / 1000;
-  for (const w of words) {
-    if (!w.isVerb || w._deleted) continue;
-
-    // ── Rocket thrust phase (visual updates only — force applied in preStep) ──
-    if (w.thrustActive) {
-      const elapsed = now - w.thrustStart;
-      if (elapsed >= w.thrustDuration) {
-        w.thrustActive = false;
-        if (w.arrowHelper) w.arrowHelper.visible = false;
-      } else if (w.arrowHelper) {
-        const pulse = 1 + 0.3 * Math.sin(now * 20);
-        w.arrowHelper.scale.set(pulse, pulse, pulse);
-      }
-      continue;
-    }
-
-    if (w.active) continue;
-
-    // ── Countdown phase ──
-    const remaining = w.activateAt - now;
-    if (remaining <= 0) {
-      w.active = true;
-      if (w.timerSprite) { structureGroup.remove(w.timerSprite); w.timerSprite = null; }
-      if (w.arrowHelper) w.arrowHelper.visible = true;
-      w.thrustActive = true;
-      w.thrustStart = now;
-      w.thrustDuration = w.length;
-      audio.rocketThrust(w.thrustDuration);
-      showMessage(`"${w.text}" IGNITION — ${w.length}s thrust!`, '#ff8800');
-    } else {
-      if (!w.timerSprite) {
-        w.timerSprite = createTimerSprite();
-        structureGroup.add(w.timerSprite);
-      }
-      const midGx = (w.arrowHelper ? w.arrowHelper.position.x : 0);
-      const midGz = (w.arrowHelper ? w.arrowHelper.position.z : 0);
-      w.timerSprite.position.set(midGx, 2.2, midGz);
-      updateTimerSprite(w.timerSprite, remaining, VERB_DELAY);
-    }
-  }
-}
-
 // ── Direction indicator arrow ──
 function updateDirectionArrow() {
   if (!selectedCube) { removeDirectionArrow(); return; }
@@ -1467,7 +1309,7 @@ function startLevel() {
   camera.position.set(6, camTargetY + 8, 10);
 
   const LEVEL_HINTS = {
-    1: 'Push your structure into the red zone using VERBS!',
+    1: 'Build words to push your structure into the red zone!',
     2: 'A wall blocks the way. Find a path around it!',
     3: 'The goal is in the air! Build upward momentum!',
     4: 'Two islands! Bridge the gap or launch across!',
@@ -1629,103 +1471,6 @@ function validatePlacement(text, startGx, startGy, startGz, dv) {
 }
 
 // ── Word type spinner ──
-function _createSpinnerSprite(text, typeName) {
-  const c = document.createElement('canvas');
-  c.width = 256; c.height = 128;
-  const ctx = c.getContext('2d');
-  ctx.clearRect(0, 0, 256, 128);
-
-  // Background pill
-  ctx.fillStyle = 'rgba(0,0,0,0.7)';
-  ctx.beginPath();
-  ctx.roundRect(8, 8, 240, 112, 16);
-  ctx.fill();
-
-  // Word
-  ctx.fillStyle = '#fff';
-  ctx.font = 'bold 28px Arial';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(text, 128, 36);
-
-  // Type with color
-  const typeColors = { VERB: '#ff6666', NOUN: '#66aaff', ADJ: '#66dd99' };
-  ctx.fillStyle = typeColors[typeName] || '#fff';
-  ctx.font = 'bold 40px Arial';
-  ctx.fillText(typeName, 128, 84);
-
-  const tex = new THREE.CanvasTexture(c);
-  const mat = new THREE.SpriteMaterial({ map: tex, transparent: true });
-  const sprite = new THREE.Sprite(mat);
-  sprite.scale.set(3, 1.5, 1);
-  sprite.userData.canvas = c;
-  sprite.userData.texture = tex;
-  return sprite;
-}
-
-function _updateSpinnerSprite(sprite, word, typeName) {
-  const c = sprite.userData.canvas;
-  const ctx = c.getContext('2d');
-  ctx.clearRect(0, 0, 256, 128);
-
-  ctx.fillStyle = 'rgba(0,0,0,0.7)';
-  ctx.beginPath();
-  ctx.roundRect(8, 8, 240, 112, 16);
-  ctx.fill();
-
-  ctx.fillStyle = '#fff';
-  ctx.font = 'bold 28px Arial';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(word, 128, 36);
-
-  const typeColors = { VERB: '#ff6666', NOUN: '#66aaff', ADJ: '#66dd99' };
-  ctx.fillStyle = typeColors[typeName] || '#fff';
-  ctx.font = 'bold 40px Arial';
-  ctx.fillText(typeName, 128, 84);
-
-  sprite.userData.texture.needsUpdate = true;
-}
-
-function spinWordType(word, types) {
-  return new Promise((resolve) => {
-    if (types.length === 1) {
-      resolve(types[0]);
-      return;
-    }
-
-    const finalType = types[Math.floor(Math.random() * types.length)];
-
-    // Create 3D sprite above structure
-    const sprite = _createSpinnerSprite(word, types[0]);
-    // Position above selected cube or structure center
-    if (selectedCube) {
-      sprite.position.set(selectedCube.gx, 3.5 + (selectedCube.gy || 0), selectedCube.gz);
-    } else {
-      sprite.position.set(0, 3.5, 0);
-    }
-    structureGroup.add(sprite);
-
-    let spins = 0;
-    const totalSpins = 12 + Math.floor(Math.random() * 6);
-    const tick = () => {
-      const t = types[spins % types.length];
-      _updateSpinnerSprite(sprite, word, t);
-      spins++;
-      if (spins >= totalSpins) {
-        _updateSpinnerSprite(sprite, word, finalType);
-        setTimeout(() => {
-          structureGroup.remove(sprite);
-          resolve(finalType);
-        }, 600);
-      } else {
-        setTimeout(tick, 80 + spins * 8);
-      }
-    };
-    tick();
-  });
-}
-
 // ── Word submission ──
 function submitWord() {
   if (!selectedCube || levelComplete || _placementQueue) return;
@@ -1819,33 +1564,14 @@ function submitWord() {
     return;
   }
 
-  // Check word types and spin if multiple
-  const types = getWordTypes(text);
   inputContainer.classList.add('hidden');
   wordInput.value = '';
 
-  const doPlace = (chosenType) => {
-    if (levelComplete) return;
-    const treatAsVerb = chosenType === 'VERB';
-    const wordIdx = words.length;
-    placeWord(text, startGx, startGz, dir, wordIdx, true, startGy, treatAsVerb);
-    lettersUsed += text.length;
-
-    const typeColors = { VERB: '#ff4444', NOUN: '#4488ff', ADJ: '#44dd88' };
-    if (treatAsVerb) {
-      showMessage(`VERB: "${text}" applies force! (${lettersUsed} letters used)`, typeColors.VERB);
-    } else {
-      showMessage(`${chosenType}: "${text}" placed (${lettersUsed} letters used)`, typeColors[chosenType] || '#aaddff');
-    }
-
-    // Selection will be restored by _placeNextLetter when animation completes
-  };
-
-  if (types.length > 1) {
-    spinWordType(text, types).then(doPlace);
-  } else {
-    doPlace(types[0]);
-  }
+  if (levelComplete) return;
+  const wordIdx = words.length;
+  placeWord(text, startGx, startGz, dir, wordIdx, true, startGy);
+  lettersUsed += text.length;
+  showMessage(`"${text}" placed (${lettersUsed} letters used)`, '#aaddff');
 }
 
 submitBtn.addEventListener('click', submitWord);
@@ -2183,7 +1909,6 @@ function animate() {
 
   if (!paused) {
     updateAnimations();
-    updateVerbTimers();
     updateLetterZones();
     updateDirectionArrow();
     audio.setMusicIntensity(cubes.length);

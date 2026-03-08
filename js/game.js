@@ -752,9 +752,11 @@ function dirFromMouse(cubeGx, cubeGy, cubeGz) {
 function createEndZone(x, z, w, d, y = 0) {
   const geo = new THREE.PlaneGeometry(w, d);
   const mat = new THREE.MeshStandardMaterial({
-    color: 0xcc2222,
+    color: 0xff3333,
+    emissive: 0xff2222,
+    emissiveIntensity: 0.6,
     transparent: true,
-    opacity: 0.35,
+    opacity: 0.55,
     side: THREE.DoubleSide,
   });
   endZone = new THREE.Mesh(geo, mat);
@@ -764,7 +766,7 @@ function createEndZone(x, z, w, d, y = 0) {
 
   // pulsing border
   const edges = new THREE.EdgesGeometry(geo);
-  const line = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0xff4444 }));
+  const line = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0xff6666, linewidth: 2 }));
   line.rotation.x = -Math.PI / 2;
   line.position.copy(endZone.position);
   line.position.y += 0.01;
@@ -780,7 +782,7 @@ function createEndZone(x, z, w, d, y = 0) {
   if (y > 0) {
     const pillarGeo = new THREE.BoxGeometry(w, y, d);
     const pillarMat = new THREE.MeshStandardMaterial({
-      color: 0xcc2222, transparent: true, opacity: 0.15,
+      color: 0xff3333, emissive: 0xff2222, emissiveIntensity: 0.4, transparent: true, opacity: 0.25,
     });
     const pillar = new THREE.Mesh(pillarGeo, pillarMat);
     pillar.position.set(x, y / 2, z);
@@ -1954,7 +1956,7 @@ function updatePhysics(dt) {
 // ── Animate end zone pulse ──
 function animateEndZone(time) {
   if (endZone) {
-    const pulse = 0.25 + Math.sin(time * 3) * 0.1;
+    const pulse = 0.45 + Math.sin(time * 3) * 0.15;
     endZone.material.opacity = pulse;
   }
 }

@@ -4,7 +4,7 @@ import * as CANNON from 'cannon-es';
 import { getRandomWord, isValidWord, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v2.0.8';
+const VERSION = 'v2.0.9';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -302,12 +302,11 @@ function updateCubeGrowth() {
 
 // ── Cannon body management ──
 
-// Add a single cube's shape to the existing body (no rebuild).
-// After adding, rebalance so body.position stays at the true COM.
+// Add a single cube's shape to the existing body (no rebuild, no teleport).
+// Shapes accumulate at offsets from _comLocal. body.position stays put —
+// cannon-es handles off-centre mass via the inertia tensor.
 function addCubeShape(cube) {
   if (!structureBody) return;
-
-  // Add shape at offset from current _comLocal
   const half = new CANNON.Vec3(0.47, 0.47, 0.47);
   const offset = new CANNON.Vec3(
     cube.gx - _comLocal.x,
@@ -315,41 +314,9 @@ function addCubeShape(cube) {
     cube.gz - _comLocal.z
   );
   structureBody.addShape(new CANNON.Box(half), offset);
-
-  // Recompute true COM from all solid cubes
-  let cx = 0, cy = 0, cz = 0, count = 0;
-  for (const c of cubes) {
-    if (_growingCube && c === _growingCube.cube) continue;
-    cx += c.gx;
-    cy += 0.5 + (c.gy || 0);
-    cz += c.gz;
-    count++;
-  }
-  if (count === 0) return;
-  cx /= count; cy /= count; cz /= count;
-
-  // Delta from old COM to new COM (local/grid space)
-  const dx = cx - _comLocal.x;
-  const dy = cy - _comLocal.y;
-  const dz = cz - _comLocal.z;
-
-  // Shift all shape offsets by -delta (recentre around new COM)
-  for (const so of structureBody.shapeOffsets) {
-    so.x -= dx;
-    so.y -= dy;
-    so.z -= dz;
-  }
-
-  // Shift body.position by +delta in world space (rotated)
-  const worldDelta = new CANNON.Vec3(dx, dy, dz);
-  structureBody.quaternion.vmult(worldDelta, worldDelta);
-  structureBody.position.vadd(worldDelta, structureBody.position);
-
-  // Update COM tracking
-  _comLocal.set(cx, cy, cz);
-
-  // Update mass and bounds
-  structureBody.mass = count;
+  // Count non-growing cubes for mass
+  const solidCount = cubes.filter(c => c !== (_growingCube && _growingCube.cube)).length;
+  structureBody.mass = solidCount;
   structureBody.updateMassProperties();
   structureBody.updateBoundingRadius();
 }

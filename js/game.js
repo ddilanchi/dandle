@@ -4,7 +4,7 @@ import * as CANNON from 'cannon-es';
 import { getRandomWord, isValidWord, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v2.0.1';
+const VERSION = 'v2.0.2';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -501,7 +501,15 @@ function placeWord(text, startGx, startGz, dir, wordIdx, animated = false, start
 function _placeNextLetter() {
   if (!_placementQueue) return;
   const q = _placementQueue;
+  if (!q.pendingCubes) q.pendingCubes = [];
+
   if (q.index >= q.letters.length) {
+    // All letters animated — now add them all to physics at once
+    for (const pc of q.pendingCubes) {
+      cubes.push(pc);
+    }
+    createStructureBody();
+
     _placementQueue = null;
     clearGhosts();
     // Select the last letter of the word
@@ -537,9 +545,11 @@ function _placeNextLetter() {
   mesh.scale.set(0.01, 0.01, 0.01); // start tiny inside parent
 
   structureGroup.add(mesh);
+  // Don't add to cubes[] yet — keep it visual-only during animation
+  // so createStructureBody won't create a physics box for it
   const cube = { letter: l.letter, gx: l.gx, gy: l.gy, gz: l.gz, mesh, wordIdx: l.wordIdx };
   mesh.userData.cube = cube;
-  cubes.push(cube);
+  q.pendingCubes.push(cube);
 
   // Fade out the ghost at this position
   const now = performance.now() / 1000;
@@ -576,7 +586,7 @@ function _placeNextLetter() {
     onComplete: () => {
       mesh.position.set(toX, toY, toZ);
       mesh.scale.set(1, 1, 1);
-      createStructureBody();
+      // No physics rebuild per letter — wait until whole word is done
       q.index++;
       _placeNextLetter();
     },

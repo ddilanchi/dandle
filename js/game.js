@@ -4,7 +4,7 @@ import * as CANNON from 'cannon-es';
 import { getRandomWord, isValidWord, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v2.0.6';
+const VERSION = 'v2.0.7';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -243,7 +243,8 @@ world.addContactMaterial(new CANNON.ContactMaterial(groundMat, structureMat, {
 }));
 
 let structureBody = null;  // cannon rigid body for the whole structure
-let _comLocal = new THREE.Vector3(); // COM in structure local space
+let _comLocal = new THREE.Vector3(); // anchor point in structure local space
+let _bodyAnchor = null; // fixed anchor = first cube's position, never changes until full rebuild
 const wallBodies = [];     // static cannon bodies for level walls
 
 let endZone = null;
@@ -262,9 +263,9 @@ const BLOCK_ANIM_DURATION = 0.35; // seconds per block slide-out
 // ── Sequential letter placement queue ──
 let _placementQueue = null;
 
-// ── Unified physics+visual growth system ──
-// Physics and visuals are the same — the cube's mesh scale and physics
-// box size grow together from 0→1 as the cube slides into position.
+// ── Visual growth system ──
+// Growing cubes are visual only (no physics). When growth completes,
+// addCubeShape() snaps a shape onto the existing body (no rebuild).
 let _growingCube = null; // only one cube grows at a time
 
 function updateCubeGrowth() {
@@ -275,32 +276,23 @@ function updateCubeGrowth() {
   const t = Math.min(elapsed / BLOCK_ANIM_DURATION, 1);
   const ease = t < 1 ? 1 - Math.pow(1 - t, 3) : 1; // ease-out cubic
 
-  // Mesh position: slide from previous letter to target
+  // Mesh position: slide from previous letter to target (visual only)
   gc.cube.mesh.position.set(
     gc.fromX + (gc.toX - gc.fromX) * ease,
     gc.fromY + (gc.toY - gc.fromY) * ease,
     gc.fromZ + (gc.toZ - gc.fromZ) * ease,
   );
 
-  // Mesh scale and physics scale grow together
+  // Mesh scale grows (visual only — no physics involvement during growth)
   const s = Math.max(ease, 0.01);
   gc.cube.mesh.scale.set(s, s, s);
-  gc.cube._physScale = s * 0.47;
-
-  // Rebuild physics body at discrete steps to stay in sync
-  const step = Math.floor(t * 8);
-  if (step > gc.lastStep || t >= 1) {
-    gc.lastStep = step;
-    createStructureBody();
-  }
 
   if (t >= 1) {
     gc.cube.mesh.position.set(gc.toX, gc.toY, gc.toZ);
     gc.cube.mesh.scale.set(1, 1, 1);
-    gc.cube._physScale = 0.47;
-    delete gc.cube._physScale;
     _growingCube = null;
-    createStructureBody();
+    // Snap shape onto existing body — no rebuild
+    addCubeShape(gc.cube);
     // Advance to next letter in queue
     if (_placementQueue) {
       _placementQueue.index++;
@@ -310,58 +302,60 @@ function updateCubeGrowth() {
 }
 
 // ── Cannon body management ──
+
+// Add a single cube's shape to the existing body (no rebuild)
+function addCubeShape(cube) {
+  if (!structureBody || !_bodyAnchor) return;
+  const half = new CANNON.Vec3(0.47, 0.47, 0.47);
+  const offset = new CANNON.Vec3(
+    cube.gx - _bodyAnchor.x,
+    (0.5 + (cube.gy || 0)) - _bodyAnchor.y,
+    cube.gz - _bodyAnchor.z
+  );
+  structureBody.addShape(new CANNON.Box(half), offset);
+  // Count non-growing cubes for mass
+  const solidCount = cubes.filter(c => c !== (_growingCube && _growingCube.cube)).length;
+  structureBody.mass = solidCount;
+  structureBody.updateMassProperties();
+}
+
 function createStructureBody() {
   const oldBody = structureBody;
   if (oldBody) world.removeBody(oldBody);
   structureBody = null;
 
-  if (cubes.length === 0) return;
+  if (cubes.length === 0) { _bodyAnchor = null; return; }
 
-  // Compute COM in local space (use animated position for growing cubes)
-  let cx = 0, cy = 0, cz = 0;
-  for (const c of cubes) {
-    if (c._physScale) {
-      cx += c.mesh.position.x;
-      cy += c.mesh.position.y;
-      cz += c.mesh.position.z;
-    } else {
-      cx += c.gx;
-      cy += 0.5 + (c.gy || 0);
-      cz += c.gz;
-    }
-  }
-  cx /= cubes.length; cy /= cubes.length; cz /= cubes.length;
-  _comLocal.set(cx, cy, cz);
+  // Use fixed anchor = first cube's grid position (stable reference point)
+  const c0 = cubes[0];
+  const ax = c0.gx, ay = 0.5 + (c0.gy || 0), az = c0.gz;
+  _bodyAnchor = { x: ax, y: ay, z: az };
+  _comLocal.set(ax, ay, az);
 
-  // During cube growth, make body kinematic so the solver can't launch it.
-  // The structure freezes in place while letters grow, then resumes physics.
-  const isGrowing = !!_growingCube;
   const body = new CANNON.Body({
-    mass: isGrowing ? 0 : cubes.length,
-    type: isGrowing ? CANNON.Body.KINEMATIC : CANNON.Body.DYNAMIC,
+    mass: cubes.length,
+    type: CANNON.Body.DYNAMIC,
     material: structureMat,
     linearDamping: 0.05,
     angularDamping: 0.05,
   });
 
   for (const c of cubes) {
-    const h = c._physScale || 0.47;
-    const half = new CANNON.Vec3(h, h, h);
-    // For growing cubes, use mesh's current animated position, not final grid pos
-    const px = c._physScale ? c.mesh.position.x : c.gx;
-    const py = c._physScale ? c.mesh.position.y : (0.5 + (c.gy || 0));
-    const pz = c._physScale ? c.mesh.position.z : c.gz;
+    const half = new CANNON.Vec3(0.47, 0.47, 0.47);
+    const px = c.gx;
+    const py = 0.5 + (c.gy || 0);
+    const pz = c.gz;
     body.addShape(
       new CANNON.Box(half),
-      new CANNON.Vec3(px - cx, py - cy, pz - cz)
+      new CANNON.Vec3(px - ax, py - ay, pz - az)
     );
   }
 
-  // COM world position
-  const comWorld = _comLocal.clone()
+  // Anchor world position
+  const anchorWorld = _comLocal.clone()
     .applyQuaternion(structureGroup.quaternion)
     .add(structureGroup.position);
-  body.position.set(comWorld.x, comWorld.y, comWorld.z);
+  body.position.set(anchorWorld.x, anchorWorld.y, anchorWorld.z);
   body.quaternion.set(
     structureGroup.quaternion.x, structureGroup.quaternion.y,
     structureGroup.quaternion.z, structureGroup.quaternion.w
@@ -606,11 +600,9 @@ function _placeNextLetter() {
 
   structureGroup.add(mesh);
 
-  // Add to cubes[] immediately with tiny physics — physics and visuals
-  // grow together via updateCubeGrowth()
+  // Add to cubes[] — no physics until growth completes (visual only during animation)
   const cube = { letter: l.letter, gx: l.gx, gy: l.gy, gz: l.gz, mesh, wordIdx: l.wordIdx };
   mesh.userData.cube = cube;
-  cube._physScale = 0.01;
   cubes.push(cube);
 
   // Clear all ghosts on first letter (no per-ghost fade to avoid z-fighting)
@@ -619,16 +611,14 @@ function _placeNextLetter() {
   const now = performance.now() / 1000;
   audio.pop(q.index);
 
-  // Start unified growth — updateCubeGrowth() handles position, scale,
-  // physics, and advancing to the next letter when done
+  // Start visual growth — updateCubeGrowth() handles position, scale,
+  // and calls addCubeShape() when done (no body rebuild)
   _growingCube = {
     cube,
     startTime: now,
     fromX, fromY, fromZ,
     toX, toY, toZ,
-    lastStep: -1,
   };
-  createStructureBody();
 }
 
 function _arrowAlwaysOnTop(arrow) {

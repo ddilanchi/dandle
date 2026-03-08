@@ -4,7 +4,7 @@ import * as CANNON from 'cannon-es';
 import { getRandomWord, isValidWord, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v2.0.3';
+const VERSION = 'v2.0.4';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -262,34 +262,51 @@ const BLOCK_ANIM_DURATION = 0.35; // seconds per block slide-out
 // ── Sequential letter placement queue ──
 let _placementQueue = null;
 
-// ── Physics growth system ──
-const PHYSICS_GROW_DURATION = 0.3; // seconds to grow physics box to full size
-const PHYSICS_GROW_STEPS = 6;      // rebuild body this many times during growth
-let _growingCubes = [];
+// ── Unified physics+visual growth system ──
+// Physics and visuals are the same — the cube's mesh scale and physics
+// box size grow together from 0→1 as the cube slides into position.
+let _growingCube = null; // only one cube grows at a time
 
-function updatePhysicsGrowth() {
-  if (_growingCubes.length === 0) return;
+function updateCubeGrowth() {
+  if (!_growingCube) return;
+  const gc = _growingCube;
   const now = performance.now() / 1000;
-  let needsRebuild = false;
-  for (let i = _growingCubes.length - 1; i >= 0; i--) {
-    const gc = _growingCubes[i];
-    const elapsed = now - gc.growStart;
-    const t = Math.min(elapsed / PHYSICS_GROW_DURATION, 1);
-    const newScale = 0.05 + 0.42 * t; // 0.05 → 0.47
-    // Only rebuild at discrete steps to avoid rebuilding every frame
-    const step = Math.floor(t * PHYSICS_GROW_STEPS);
-    if (step > gc.lastStep || t >= 1) {
-      gc.cube._physScale = newScale;
-      gc.lastStep = step;
-      needsRebuild = true;
-      if (t >= 1) {
-        gc.cube._physScale = 0.47;
-        delete gc.cube._physScale; // use default from now on
-        _growingCubes.splice(i, 1);
-      }
+  const elapsed = now - gc.startTime;
+  const t = Math.min(elapsed / BLOCK_ANIM_DURATION, 1);
+  const ease = t < 1 ? 1 - Math.pow(1 - t, 3) : 1; // ease-out cubic
+
+  // Mesh position: slide from previous letter to target
+  gc.cube.mesh.position.set(
+    gc.fromX + (gc.toX - gc.fromX) * ease,
+    gc.fromY + (gc.toY - gc.fromY) * ease,
+    gc.fromZ + (gc.toZ - gc.fromZ) * ease,
+  );
+
+  // Mesh scale and physics scale grow together
+  const s = Math.max(ease, 0.01);
+  gc.cube.mesh.scale.set(s, s, s);
+  gc.cube._physScale = s * 0.47;
+
+  // Rebuild physics body at discrete steps to stay in sync
+  const step = Math.floor(t * 8);
+  if (step > gc.lastStep || t >= 1) {
+    gc.lastStep = step;
+    createStructureBody();
+  }
+
+  if (t >= 1) {
+    gc.cube.mesh.position.set(gc.toX, gc.toY, gc.toZ);
+    gc.cube.mesh.scale.set(1, 1, 1);
+    gc.cube._physScale = 0.47;
+    delete gc.cube._physScale;
+    _growingCube = null;
+    createStructureBody();
+    // Advance to next letter in queue
+    if (_placementQueue) {
+      _placementQueue.index++;
+      _placeNextLetter();
     }
   }
-  if (needsRebuild) createStructureBody();
 }
 
 // ── Cannon body management ──
@@ -532,18 +549,8 @@ function placeWord(text, startGx, startGz, dir, wordIdx, animated = false, start
 function _placeNextLetter() {
   if (!_placementQueue) return;
   const q = _placementQueue;
-  if (!q.pendingCubes) q.pendingCubes = [];
 
   if (q.index >= q.letters.length) {
-    // All letters animated — add them with tiny physics boxes that grow
-    const now2 = performance.now() / 1000;
-    for (const pc of q.pendingCubes) {
-      pc._physScale = 0.05; // start tiny
-      cubes.push(pc);
-      _growingCubes.push({ cube: pc, growStart: now2, lastStep: -1 });
-    }
-    createStructureBody();
-
     _placementQueue = null;
     clearGhosts();
     // Select the last letter of the word
@@ -568,22 +575,25 @@ function _placeNextLetter() {
   const l = q.letters[q.index];
   const mesh = makeLetterMesh(l.letter);
 
-  // Start inside the previous letter and slide out to target
+  // Compute slide from previous letter to target
   const prev = q.index > 0 ? q.letters[q.index - 1] : null;
   const fromX = prev ? prev.gx : (l.gx - q.dirVec.x);
   const fromY = prev ? (0.5 + prev.gy) : (0.5 + l.gy);
   const fromZ = prev ? prev.gz : (l.gz - q.dirVec.z);
   const toX = l.gx, toY = 0.5 + l.gy, toZ = l.gz;
 
+  // Start tiny at previous letter's position
   mesh.position.set(fromX, fromY, fromZ);
-  mesh.scale.set(0.01, 0.01, 0.01); // start tiny inside parent
+  mesh.scale.set(0.01, 0.01, 0.01);
 
   structureGroup.add(mesh);
-  // Don't add to cubes[] yet — keep it visual-only during animation
-  // so createStructureBody won't create a physics box for it
+
+  // Add to cubes[] immediately with tiny physics — physics and visuals
+  // grow together via updateCubeGrowth()
   const cube = { letter: l.letter, gx: l.gx, gy: l.gy, gz: l.gz, mesh, wordIdx: l.wordIdx };
   mesh.userData.cube = cube;
-  q.pendingCubes.push(cube);
+  cube._physScale = 0.01;
+  cubes.push(cube);
 
   // Fade out the ghost at this position
   const now = performance.now() / 1000;
@@ -608,23 +618,17 @@ function _placeNextLetter() {
   }
 
   audio.pop(q.index);
-  animations.push({
-    mesh,
+
+  // Start unified growth — updateCubeGrowth() handles position, scale,
+  // physics, and advancing to the next letter when done
+  _growingCube = {
+    cube,
     startTime: now,
-    duration: BLOCK_ANIM_DURATION,
-    soundIndex: q.index,
-    soundPlayed: true,
-    isSlideGrow: true,
     fromX, fromY, fromZ,
     toX, toY, toZ,
-    onComplete: () => {
-      mesh.position.set(toX, toY, toZ);
-      mesh.scale.set(1, 1, 1);
-      // No physics rebuild per letter — wait until whole word is done
-      q.index++;
-      _placeNextLetter();
-    },
-  });
+    lastStep: -1,
+  };
+  createStructureBody();
 }
 
 function _arrowAlwaysOnTop(arrow) {
@@ -666,24 +670,6 @@ function updateAnimations() {
         const ci = cubes.findIndex(c => c.mesh === a.mesh);
         if (ci !== -1) cubes.splice(ci, 1);
         animations.splice(i, 1);
-      }
-    } else if (a.isSlideGrow) {
-      // Slide from previous letter position while growing from tiny to full size
-      const ease = t < 1 ? 1 - Math.pow(1 - t, 3) : 1; // ease-out cubic
-      // Position: lerp from source to target
-      a.mesh.position.set(
-        a.fromX + (a.toX - a.fromX) * ease,
-        a.fromY + (a.toY - a.fromY) * ease,
-        a.fromZ + (a.toZ - a.fromZ) * ease,
-      );
-      // Scale: grow from tiny to full, slight overshoot at end
-      const s = t < 0.85
-        ? ease
-        : 1 + Math.sin((t - 0.85) / 0.15 * Math.PI) * 0.04;
-      a.mesh.scale.set(s, s, s);
-      if (t >= 1) {
-        animations.splice(i, 1);
-        if (a.onComplete) a.onComplete();
       }
     } else if (a.isFadeOut) {
       // Fade out ghost mesh
@@ -1968,7 +1954,7 @@ function animate() {
 
   if (!paused) {
     updateAnimations();
-    updatePhysicsGrowth();
+    updateCubeGrowth();
     updateLetterZones();
     updateDirectionArrow();
     audio.setMusicIntensity(cubes.length);

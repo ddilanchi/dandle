@@ -6,7 +6,7 @@ import { AudioManager } from './audio.js';
 
 await RAPIER.init();
 
-const VERSION = 'v3.6.1';
+const VERSION = 'v3.7.0';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -270,12 +270,11 @@ const BLOCK_ANIM_DURATION = 0.35; // seconds per block slide-out
 let _placementQueue = null;
 
 // ── Growth system ──
-// Visual mesh slides from parent center to target. Kinematic physics
-// body is created at the EDGE of the parent (small overlap) and slides
-// to the target. It collides with structure + ground, creating a real
-// physics push. The floor constrains below, the structure is pushed.
-const PHYS_START_T = 0.99; // kinematic body appears when mesh is 99% of the way (minimal overlap)
-let _growingCube = null; // { cube, body, fromX/Y/Z, toX/Y/Z, progress, distance, physCreated }
+// Kinematic body spawns inside the parent and slides to target.
+// Parent's collider is temporarily removed so there's no self-collision.
+// The growing cube pushes against all OTHER structure cubes + the ground.
+// When it arrives, parent collider is restored and body is rebuilt.
+let _growingCube = null; // { cube, body, parentCube, fromX/Y/Z, toX/Y/Z, progress, distance }
 
 function updateCubeGrowth(dt) {
   if (!_growingCube) return;
@@ -291,48 +290,38 @@ function updateCubeGrowth(dt) {
   const py = gc.fromY + (gc.toY - gc.fromY) * t;
   const pz = gc.fromZ + (gc.toZ - gc.fromZ) * t;
 
-  // Visual mesh always tracks interpolated position
   gc.cube.mesh.position.set(px, py, pz);
 
-  // Create kinematic physics body once mesh passes the edge of the parent
-  if (!gc.physCreated && t >= PHYS_START_T) {
-    gc.physCreated = true;
-    const startX = gc.fromX + (gc.toX - gc.fromX) * PHYS_START_T;
-    const startY = gc.fromY + (gc.toY - gc.fromY) * PHYS_START_T;
-    const startZ = gc.fromZ + (gc.toZ - gc.fromZ) * PHYS_START_T;
-    const worldStart = new THREE.Vector3(startX, startY, startZ)
-      .applyQuaternion(structureGroup.quaternion)
-      .add(structureGroup.position);
-    const growBodyDesc = RAPIER.RigidBodyDesc.kinematicPositionBased()
-      .setTranslation(worldStart.x, worldStart.y, worldStart.z)
-      .setRotation({
-        x: structureGroup.quaternion.x, y: structureGroup.quaternion.y,
-        z: structureGroup.quaternion.z, w: structureGroup.quaternion.w
-      });
-    gc.body = world.createRigidBody(growBodyDesc);
-    const colliderDesc = RAPIER.ColliderDesc.cuboid(0.5, 0.5, 0.5)
-      .setFriction(0.5).setRestitution(0.0)
-      .setCollisionGroups(makeCollisionGroups(CG_GROWING, CG_STRUCTURE | CG_GROUND));
-    world.createCollider(colliderDesc, gc.body);
-  }
-
-  // Move kinematic body if it exists
-  if (gc.body) {
-    const worldPos = new THREE.Vector3(px, py, pz)
-      .applyQuaternion(structureGroup.quaternion)
-      .add(structureGroup.position);
-    gc.body.setNextKinematicTranslation({ x: worldPos.x, y: worldPos.y, z: worldPos.z });
-    gc.body.setNextKinematicRotation({
-      x: structureGroup.quaternion.x, y: structureGroup.quaternion.y,
-      z: structureGroup.quaternion.z, w: structureGroup.quaternion.w
-    });
-  }
+  // Move kinematic body
+  const worldPos = new THREE.Vector3(px, py, pz)
+    .applyQuaternion(structureGroup.quaternion)
+    .add(structureGroup.position);
+  gc.body.setNextKinematicTranslation({ x: worldPos.x, y: worldPos.y, z: worldPos.z });
+  gc.body.setNextKinematicRotation({
+    x: structureGroup.quaternion.x, y: structureGroup.quaternion.y,
+    z: structureGroup.quaternion.z, w: structureGroup.quaternion.w
+  });
 
   if (t >= 1) {
     gc.cube.mesh.position.set(gc.toX, gc.toY, gc.toZ);
 
     // Remove kinematic body
-    if (gc.body) world.removeRigidBody(gc.body);
+    world.removeRigidBody(gc.body);
+
+    // Restore parent's collider
+    if (gc.parentCube && structureBody) {
+      const pc = gc.parentCube;
+      const localX = pc.gx - _bodyAnchor.x;
+      const localY = (0.5 + (pc.gy || 0)) - _bodyAnchor.y;
+      const localZ = pc.gz - _bodyAnchor.z;
+      const desc = RAPIER.ColliderDesc.cuboid(0.5, 0.5, 0.5)
+        .setTranslation(localX, localY, localZ)
+        .setFriction(0.02).setRestitution(0.05)
+        .setDensity(1.0)
+        .setFrictionCombineRule(RAPIER.CoefficientCombineRule.Min)
+        .setCollisionGroups(makeCollisionGroups(CG_STRUCTURE, CG_GROUND | CG_GROWING));
+      pc.collider = world.createCollider(desc, structureBody);
+    }
 
     _growingCube = null;
     // Advance to next letter in queue
@@ -639,12 +628,40 @@ function _placeNextLetter() {
 
   audio.pop(q.index);
 
+  // Find parent cube and temporarily remove its collider
+  const parentGx = Math.round(fromX);
+  const parentGy = Math.round(fromY - 0.5);
+  const parentGz = Math.round(fromZ);
+  const parentCube = cubes.find(c =>
+    c !== cube && c.gx === parentGx && (c.gy || 0) === parentGy && c.gz === parentGz
+  );
+  if (parentCube && parentCube.collider) {
+    world.removeCollider(parentCube.collider, false);
+    parentCube.collider = null;
+  }
+
+  // Create kinematic body at parent position immediately
+  const worldFrom = new THREE.Vector3(fromX, fromY, fromZ)
+    .applyQuaternion(structureGroup.quaternion)
+    .add(structureGroup.position);
+  const growBodyDesc = RAPIER.RigidBodyDesc.kinematicPositionBased()
+    .setTranslation(worldFrom.x, worldFrom.y, worldFrom.z)
+    .setRotation({
+      x: structureGroup.quaternion.x, y: structureGroup.quaternion.y,
+      z: structureGroup.quaternion.z, w: structureGroup.quaternion.w
+    });
+  const growBody = world.createRigidBody(growBodyDesc);
+  const colliderDesc = RAPIER.ColliderDesc.cuboid(0.5, 0.5, 0.5)
+    .setFriction(0.5).setRestitution(0.0)
+    .setCollisionGroups(makeCollisionGroups(CG_GROWING, CG_STRUCTURE | CG_GROUND));
+  world.createCollider(colliderDesc, growBody);
+
   const dx = toX - fromX, dy = toY - fromY, dz = toZ - fromZ;
   const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
   _growingCube = {
     cube,
-    body: null,
-    physCreated: false,
+    body: growBody,
+    parentCube,
     fromX, fromY, fromZ,
     toX, toY, toZ,
     progress: 0,

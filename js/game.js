@@ -6,7 +6,7 @@ import { AudioManager } from './audio.js';
 
 await RAPIER.init();
 
-const VERSION = 'v3.7.0';
+const VERSION = 'v3.7.1';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -271,9 +271,10 @@ let _placementQueue = null;
 
 // ── Growth system ──
 // Kinematic body spawns inside the parent and slides to target.
-// Parent's collider is temporarily removed so there's no self-collision.
-// The growing cube pushes against all OTHER structure cubes + the ground.
-// When it arrives, parent collider is restored and body is rebuilt.
+// Parent's collider group is changed to CG_PARENT so the growing cube
+// ignores it (but it still collides with ground — keeps supporting the
+// structure). Growing cube pushes all other structure cubes + ground.
+const CG_PARENT = 8; // temporary group for the parent during growth
 let _growingCube = null; // { cube, body, parentCube, fromX/Y/Z, toX/Y/Z, progress, distance }
 
 function updateCubeGrowth(dt) {
@@ -308,19 +309,11 @@ function updateCubeGrowth(dt) {
     // Remove kinematic body
     world.removeRigidBody(gc.body);
 
-    // Restore parent's collider
-    if (gc.parentCube && structureBody) {
-      const pc = gc.parentCube;
-      const localX = pc.gx - _bodyAnchor.x;
-      const localY = (0.5 + (pc.gy || 0)) - _bodyAnchor.y;
-      const localZ = pc.gz - _bodyAnchor.z;
-      const desc = RAPIER.ColliderDesc.cuboid(0.5, 0.5, 0.5)
-        .setTranslation(localX, localY, localZ)
-        .setFriction(0.02).setRestitution(0.05)
-        .setDensity(1.0)
-        .setFrictionCombineRule(RAPIER.CoefficientCombineRule.Min)
-        .setCollisionGroups(makeCollisionGroups(CG_STRUCTURE, CG_GROUND | CG_GROWING));
-      pc.collider = world.createCollider(desc, structureBody);
+    // Restore parent's collider group back to normal
+    if (gc.parentCube && gc.parentCube.collider) {
+      gc.parentCube.collider.setCollisionGroups(
+        makeCollisionGroups(CG_STRUCTURE, CG_GROUND | CG_GROWING)
+      );
     }
 
     _growingCube = null;
@@ -628,7 +621,7 @@ function _placeNextLetter() {
 
   audio.pop(q.index);
 
-  // Find parent cube and temporarily remove its collider
+  // Find parent cube and hide it from growing cube's collision
   const parentGx = Math.round(fromX);
   const parentGy = Math.round(fromY - 0.5);
   const parentGz = Math.round(fromZ);
@@ -636,8 +629,10 @@ function _placeNextLetter() {
     c !== cube && c.gx === parentGx && (c.gy || 0) === parentGy && c.gz === parentGz
   );
   if (parentCube && parentCube.collider) {
-    world.removeCollider(parentCube.collider, false);
-    parentCube.collider = null;
+    // Switch to CG_PARENT — still collides with ground, invisible to CG_GROWING
+    parentCube.collider.setCollisionGroups(
+      makeCollisionGroups(CG_PARENT, CG_GROUND)
+    );
   }
 
   // Create kinematic body at parent position immediately

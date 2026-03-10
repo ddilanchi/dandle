@@ -6,7 +6,7 @@ import { AudioManager } from './audio.js';
 
 await RAPIER.init();
 
-const VERSION = 'v3.4.0';
+const VERSION = 'v3.4.1';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -309,15 +309,27 @@ function updateCubeGrowth(dt) {
     // Remove kinematic body
     world.removeRigidBody(gc.body);
 
-    // Add new cube's collider to structureBody
+    // Add new cube's collider to structureBody.
+    // Compute offset from body's CURRENT position (not original anchor)
+    // so that if the body has settled/sunk, the collider is still correct.
     if (structureBody) {
       const cube = gc.cube;
-      const localX = cube.gx - _bodyAnchor.x;
-      const localY = (0.5 + (cube.gy || 0)) - _bodyAnchor.y;
-      const localZ = cube.gz - _bodyAnchor.z;
+      // Where this cube should be in world space
+      const worldTarget = new THREE.Vector3(cube.gx, 0.5 + (cube.gy || 0), cube.gz)
+        .applyQuaternion(structureGroup.quaternion)
+        .add(structureGroup.position);
+      // Convert to body-local space
+      const bodyPos = structureBody.translation();
+      const bodyRot = structureBody.rotation();
+      const bodyQInv = new THREE.Quaternion(bodyRot.x, bodyRot.y, bodyRot.z, bodyRot.w).invert();
+      const localOffset = new THREE.Vector3(
+        worldTarget.x - bodyPos.x,
+        worldTarget.y - bodyPos.y,
+        worldTarget.z - bodyPos.z
+      ).applyQuaternion(bodyQInv);
 
       const desc = RAPIER.ColliderDesc.cuboid(0.5, 0.5, 0.5)
-        .setTranslation(localX, localY, localZ)
+        .setTranslation(localOffset.x, localOffset.y, localOffset.z)
         .setFriction(0.02).setRestitution(0.05)
         .setDensity(1.0)
         .setFrictionCombineRule(RAPIER.CoefficientCombineRule.Min)

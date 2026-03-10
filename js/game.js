@@ -6,7 +6,7 @@ import { AudioManager } from './audio.js';
 
 await RAPIER.init();
 
-const VERSION = 'v3.3.1';
+const VERSION = 'v3.3.2';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -1886,25 +1886,29 @@ function updatePhysics(dt) {
   if (levelComplete || !structureBody) return;
 
   // Accumulator pattern for fixed-step physics
+  // Clamp velocity INSIDE the loop — every single step — so impulses
+  // from kinematic overlap can't accumulate across multiple sub-steps.
+  const MAX_VEL = 1.5;
+  const MAX_ANGVEL = 1.0;
   physicsAccumulator += dt;
   while (physicsAccumulator >= PHYS_STEP) {
     world.step();
-    physicsAccumulator -= PHYS_STEP;
-  }
 
-  // Clamp structure velocity — prevents kinematic push from launching it
-  const MAX_VEL = 2.0;
-  const vel = structureBody.linvel();
-  const speed = Math.sqrt(vel.x * vel.x + vel.y * vel.y + vel.z * vel.z);
-  if (speed > MAX_VEL) {
-    const scale = MAX_VEL / speed;
-    structureBody.setLinvel({ x: vel.x * scale, y: vel.y * scale, z: vel.z * scale }, true);
-  }
-  const avel = structureBody.angvel();
-  const aspeed = Math.sqrt(avel.x * avel.x + avel.y * avel.y + avel.z * avel.z);
-  if (aspeed > MAX_VEL) {
-    const ascale = MAX_VEL / aspeed;
-    structureBody.setAngvel({ x: avel.x * ascale, y: avel.y * ascale, z: avel.z * ascale }, true);
+    // Clamp after each sub-step
+    const vel = structureBody.linvel();
+    const speed = Math.sqrt(vel.x * vel.x + vel.y * vel.y + vel.z * vel.z);
+    if (speed > MAX_VEL) {
+      const s = MAX_VEL / speed;
+      structureBody.setLinvel({ x: vel.x * s, y: vel.y * s, z: vel.z * s }, true);
+    }
+    const av = structureBody.angvel();
+    const as2 = Math.sqrt(av.x * av.x + av.y * av.y + av.z * av.z);
+    if (as2 > MAX_ANGVEL) {
+      const s = MAX_ANGVEL / as2;
+      structureBody.setAngvel({ x: av.x * s, y: av.y * s, z: av.z * s }, true);
+    }
+
+    physicsAccumulator -= PHYS_STEP;
   }
 
   syncGroupFromBody();

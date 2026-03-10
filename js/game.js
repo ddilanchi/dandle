@@ -6,7 +6,7 @@ import { AudioManager } from './audio.js';
 
 await RAPIER.init();
 
-const VERSION = 'v3.3.0';
+const VERSION = 'v3.3.1';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -271,34 +271,10 @@ let _placementQueue = null;
 
 // ── Growth system ──
 // Each new cube spawns as a kinematic body INSIDE the parent cube,
-// then physically slides to its target. It collides with the structure
-// so it pushes it as it moves. The parent cube's collider is temporarily
-// removed so the growing cube doesn't collide with the cube it spawned in.
-let _growingCube = null; // { cube, body, parentCube, parentCollider, fromX/Y/Z, toX/Y/Z, progress, distance }
-
-function _removeParentCollider(parentCube) {
-  if (parentCube && parentCube.collider) {
-    world.removeCollider(parentCube.collider, false); // false = don't wake body
-    const saved = parentCube.collider;
-    parentCube.collider = null;
-    return saved;
-  }
-  return null;
-}
-
-function _restoreParentCollider(parentCube) {
-  if (!parentCube || !structureBody) return;
-  const localX = parentCube.gx - _bodyAnchor.x;
-  const localY = (0.5 + (parentCube.gy || 0)) - _bodyAnchor.y;
-  const localZ = parentCube.gz - _bodyAnchor.z;
-  const desc = RAPIER.ColliderDesc.cuboid(0.5, 0.5, 0.5)
-    .setTranslation(localX, localY, localZ)
-    .setFriction(0.02).setRestitution(0.05)
-    .setDensity(1.0)
-    .setFrictionCombineRule(RAPIER.CoefficientCombineRule.Min)
-    .setCollisionGroups(makeCollisionGroups(CG_STRUCTURE, CG_GROUND | CG_GROWING));
-  parentCube.collider = world.createCollider(desc, structureBody);
-}
+// then physically slides to its target. It overlaps the parent's
+// collider on the structure body — Rapier resolves this penetration
+// by pushing the structure away. Velocity clamping prevents launching.
+let _growingCube = null; // { cube, body, fromX/Y/Z, toX/Y/Z, progress, distance }
 
 function updateCubeGrowth(dt) {
   if (!_growingCube) return;
@@ -317,7 +293,7 @@ function updateCubeGrowth(dt) {
   // Mesh follows kinematic body
   gc.cube.mesh.position.set(px, py, pz);
 
-  // Move kinematic body in world space — pushes the structure
+  // Move kinematic body in world space — overlaps with structure, pushing it
   const worldPos = new THREE.Vector3(px, py, pz)
     .applyQuaternion(structureGroup.quaternion)
     .add(structureGroup.position);
@@ -332,9 +308,6 @@ function updateCubeGrowth(dt) {
 
     // Remove kinematic body
     world.removeRigidBody(gc.body);
-
-    // Restore parent's collider
-    _restoreParentCollider(gc.parentCube);
 
     // Add new cube's collider to structureBody
     if (structureBody) {
@@ -642,18 +615,7 @@ function _placeNextLetter() {
 
   audio.pop(q.index);
 
-  // Find the parent cube (the one we're spawning inside)
-  const parentGx = Math.round(fromX);
-  const parentGy = Math.round(fromY - 0.5);
-  const parentGz = Math.round(fromZ);
-  const parentCube = cubes.find(c =>
-    c !== cube && c.gx === parentGx && (c.gy || 0) === parentGy && c.gz === parentGz
-  );
-
-  // Temporarily remove parent's collider so kinematic body doesn't collide with it
-  _removeParentCollider(parentCube);
-
-  // Create kinematic body at parent's world position — collides with structure
+  // Create kinematic body INSIDE parent — overlaps parent collider on purpose
   const worldFrom = new THREE.Vector3(fromX, fromY, fromZ)
     .applyQuaternion(structureGroup.quaternion)
     .add(structureGroup.position);
@@ -674,7 +636,6 @@ function _placeNextLetter() {
   _growingCube = {
     cube,
     body: growBody,
-    parentCube,
     fromX, fromY, fromZ,
     toX, toY, toZ,
     progress: 0,

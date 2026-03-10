@@ -6,7 +6,7 @@ import { AudioManager } from './audio.js';
 
 await RAPIER.init();
 
-const VERSION = 'v3.4.1';
+const VERSION = 'v3.5.0';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -270,11 +270,11 @@ const BLOCK_ANIM_DURATION = 0.35; // seconds per block slide-out
 let _placementQueue = null;
 
 // ── Growth system ──
-// Each new cube spawns as a kinematic body INSIDE the parent cube,
-// then physically slides to its target. It overlaps the parent's
-// collider on the structure body — Rapier resolves this penetration
-// by pushing the structure away. Velocity clamping prevents launching.
-let _growingCube = null; // { cube, body, fromX/Y/Z, toX/Y/Z, progress, distance }
+// Purely visual animation — mesh slides from parent to target.
+// No physics body during growth. When each cube arrives, its mesh
+// snaps to final position. When the entire word finishes, a single
+// createStructureBody() rebuild adds all colliders cleanly.
+let _growingCube = null; // { cube, fromX/Y/Z, toX/Y/Z, progress, distance }
 
 function updateCubeGrowth(dt) {
   if (!_growingCube) return;
@@ -290,52 +290,10 @@ function updateCubeGrowth(dt) {
   const py = gc.fromY + (gc.toY - gc.fromY) * t;
   const pz = gc.fromZ + (gc.toZ - gc.fromZ) * t;
 
-  // Mesh follows kinematic body
   gc.cube.mesh.position.set(px, py, pz);
-
-  // Move kinematic body in world space — overlaps with structure, pushing it
-  const worldPos = new THREE.Vector3(px, py, pz)
-    .applyQuaternion(structureGroup.quaternion)
-    .add(structureGroup.position);
-  gc.body.setNextKinematicTranslation({ x: worldPos.x, y: worldPos.y, z: worldPos.z });
-  gc.body.setNextKinematicRotation({
-    x: structureGroup.quaternion.x, y: structureGroup.quaternion.y,
-    z: structureGroup.quaternion.z, w: structureGroup.quaternion.w
-  });
 
   if (t >= 1) {
     gc.cube.mesh.position.set(gc.toX, gc.toY, gc.toZ);
-
-    // Remove kinematic body
-    world.removeRigidBody(gc.body);
-
-    // Add new cube's collider to structureBody.
-    // Compute offset from body's CURRENT position (not original anchor)
-    // so that if the body has settled/sunk, the collider is still correct.
-    if (structureBody) {
-      const cube = gc.cube;
-      // Where this cube should be in world space
-      const worldTarget = new THREE.Vector3(cube.gx, 0.5 + (cube.gy || 0), cube.gz)
-        .applyQuaternion(structureGroup.quaternion)
-        .add(structureGroup.position);
-      // Convert to body-local space
-      const bodyPos = structureBody.translation();
-      const bodyRot = structureBody.rotation();
-      const bodyQInv = new THREE.Quaternion(bodyRot.x, bodyRot.y, bodyRot.z, bodyRot.w).invert();
-      const localOffset = new THREE.Vector3(
-        worldTarget.x - bodyPos.x,
-        worldTarget.y - bodyPos.y,
-        worldTarget.z - bodyPos.z
-      ).applyQuaternion(bodyQInv);
-
-      const desc = RAPIER.ColliderDesc.cuboid(0.5, 0.5, 0.5)
-        .setTranslation(localOffset.x, localOffset.y, localOffset.z)
-        .setFriction(0.02).setRestitution(0.05)
-        .setDensity(1.0)
-        .setFrictionCombineRule(RAPIER.CoefficientCombineRule.Min)
-        .setCollisionGroups(makeCollisionGroups(CG_STRUCTURE, CG_GROUND));
-      cube.collider = world.createCollider(desc, structureBody);
-    }
 
     _growingCube = null;
     // Advance to next letter in queue
@@ -378,10 +336,6 @@ function createStructureBody() {
     .setLinearDamping(0.1)
     .setAngularDamping(0.1);
   structureBody = world.createRigidBody(bodyDesc);
-
-  // Zero velocity on creation
-  structureBody.setLinvel({ x: 0, y: 0, z: 0 }, true);
-  structureBody.setAngvel({ x: 0, y: 0, z: 0 }, true);
 
   for (const c of cubes) {
     const desc = RAPIER.ColliderDesc.cuboid(0.5, 0.5, 0.5)
@@ -582,6 +536,25 @@ function _placeNextLetter() {
   const q = _placementQueue;
 
   if (q.index >= q.letters.length) {
+    // Word complete — rebuild body with all new colliders at once
+    const oldVel = structureBody ? structureBody.linvel() : { x: 0, y: 0, z: 0 };
+    const oldAngvel = structureBody ? structureBody.angvel() : { x: 0, y: 0, z: 0 };
+    createStructureBody();
+    // Preserve momentum + add push impulse in build direction
+    if (structureBody) {
+      structureBody.setLinvel(oldVel, true);
+      structureBody.setAngvel(oldAngvel, true);
+      const pushStrength = 2.0 * q.letters.length;
+      const dv = q.dirVec;
+      const pushDir = new THREE.Vector3(dv.x, dv.y || 0, dv.z)
+        .applyQuaternion(structureGroup.quaternion);
+      structureBody.applyImpulse({
+        x: pushDir.x * pushStrength,
+        y: pushDir.y * pushStrength,
+        z: pushDir.z * pushStrength
+      }, true);
+    }
+
     _placementQueue = null;
     clearGhosts();
     // Select the last letter of the word
@@ -627,27 +600,10 @@ function _placeNextLetter() {
 
   audio.pop(q.index);
 
-  // Create kinematic body INSIDE parent — overlaps parent collider on purpose
-  const worldFrom = new THREE.Vector3(fromX, fromY, fromZ)
-    .applyQuaternion(structureGroup.quaternion)
-    .add(structureGroup.position);
-  const growBodyDesc = RAPIER.RigidBodyDesc.kinematicPositionBased()
-    .setTranslation(worldFrom.x, worldFrom.y, worldFrom.z)
-    .setRotation({
-      x: structureGroup.quaternion.x, y: structureGroup.quaternion.y,
-      z: structureGroup.quaternion.z, w: structureGroup.quaternion.w
-    });
-  const growBody = world.createRigidBody(growBodyDesc);
-  const growColliderDesc = RAPIER.ColliderDesc.cuboid(0.5, 0.5, 0.5)
-    .setFriction(0.02).setRestitution(0.0)
-    .setCollisionGroups(makeCollisionGroups(CG_GROWING, CG_GROUND));
-  world.createCollider(growColliderDesc, growBody);
-
   const dx = toX - fromX, dy = toY - fromY, dz = toZ - fromZ;
   const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
   _growingCube = {
     cube,
-    body: growBody,
     fromX, fromY, fromZ,
     toX, toY, toZ,
     progress: 0,

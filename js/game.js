@@ -6,7 +6,7 @@ import { AudioManager } from './audio.js';
 
 await RAPIER.init();
 
-const VERSION = 'v3.6.0';
+const VERSION = 'v3.6.1';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -274,7 +274,7 @@ let _placementQueue = null;
 // body is created at the EDGE of the parent (small overlap) and slides
 // to the target. It collides with structure + ground, creating a real
 // physics push. The floor constrains below, the structure is pushed.
-const PHYS_START_T = 0.55; // kinematic body appears when mesh is 55% of the way
+const PHYS_START_T = 0.99; // kinematic body appears when mesh is 99% of the way (minimal overlap)
 let _growingCube = null; // { cube, body, fromX/Y/Z, toX/Y/Z, progress, distance, physCreated }
 
 function updateCubeGrowth(dt) {

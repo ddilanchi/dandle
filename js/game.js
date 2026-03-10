@@ -6,7 +6,7 @@ import { AudioManager } from './audio.js';
 
 await RAPIER.init();
 
-const VERSION = 'v3.2.0';
+const VERSION = 'v3.3.0';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -270,12 +270,35 @@ const BLOCK_ANIM_DURATION = 0.35; // seconds per block slide-out
 let _placementQueue = null;
 
 // ── Growth system ──
-// Growth is visual-only (no physics body during transit). Instead of
-// colliding with the structure, we apply a gentle impulse to the
-// structure body in the growth direction. When the cube arrives,
-// a collider is added to the structure body.
-const PUSH_FORCE = 3; // force applied to structure per growing cube
-let _growingCube = null; // { cube, dirWorld, fromX/Y/Z, toX/Y/Z, progress, distance }
+// Each new cube spawns as a kinematic body INSIDE the parent cube,
+// then physically slides to its target. It collides with the structure
+// so it pushes it as it moves. The parent cube's collider is temporarily
+// removed so the growing cube doesn't collide with the cube it spawned in.
+let _growingCube = null; // { cube, body, parentCube, parentCollider, fromX/Y/Z, toX/Y/Z, progress, distance }
+
+function _removeParentCollider(parentCube) {
+  if (parentCube && parentCube.collider) {
+    world.removeCollider(parentCube.collider, false); // false = don't wake body
+    const saved = parentCube.collider;
+    parentCube.collider = null;
+    return saved;
+  }
+  return null;
+}
+
+function _restoreParentCollider(parentCube) {
+  if (!parentCube || !structureBody) return;
+  const localX = parentCube.gx - _bodyAnchor.x;
+  const localY = (0.5 + (parentCube.gy || 0)) - _bodyAnchor.y;
+  const localZ = parentCube.gz - _bodyAnchor.z;
+  const desc = RAPIER.ColliderDesc.cuboid(0.5, 0.5, 0.5)
+    .setTranslation(localX, localY, localZ)
+    .setFriction(0.02).setRestitution(0.05)
+    .setDensity(1.0)
+    .setFrictionCombineRule(RAPIER.CoefficientCombineRule.Min)
+    .setCollisionGroups(makeCollisionGroups(CG_STRUCTURE, CG_GROUND | CG_GROWING));
+  parentCube.collider = world.createCollider(desc, structureBody);
+}
 
 function updateCubeGrowth(dt) {
   if (!_growingCube) return;
@@ -291,22 +314,29 @@ function updateCubeGrowth(dt) {
   const py = gc.fromY + (gc.toY - gc.fromY) * t;
   const pz = gc.fromZ + (gc.toZ - gc.fromZ) * t;
 
-  // Visual: mesh slides from parent to target
+  // Mesh follows kinematic body
   gc.cube.mesh.position.set(px, py, pz);
 
-  // Apply gentle push force to structure in the opposite direction
-  // (cube slides toward target → structure pushed away from target)
-  if (structureBody && t < 1) {
-    const pushX = -gc.dirWorld.x * PUSH_FORCE;
-    const pushY = -gc.dirWorld.y * PUSH_FORCE;
-    const pushZ = -gc.dirWorld.z * PUSH_FORCE;
-    structureBody.applyImpulse({ x: pushX * dt, y: pushY * dt, z: pushZ * dt }, true);
-  }
+  // Move kinematic body in world space — pushes the structure
+  const worldPos = new THREE.Vector3(px, py, pz)
+    .applyQuaternion(structureGroup.quaternion)
+    .add(structureGroup.position);
+  gc.body.setNextKinematicTranslation({ x: worldPos.x, y: worldPos.y, z: worldPos.z });
+  gc.body.setNextKinematicRotation({
+    x: structureGroup.quaternion.x, y: structureGroup.quaternion.y,
+    z: structureGroup.quaternion.z, w: structureGroup.quaternion.w
+  });
 
   if (t >= 1) {
     gc.cube.mesh.position.set(gc.toX, gc.toY, gc.toZ);
 
-    // Add collider to structureBody using grid-based offset
+    // Remove kinematic body
+    world.removeRigidBody(gc.body);
+
+    // Restore parent's collider
+    _restoreParentCollider(gc.parentCube);
+
+    // Add new cube's collider to structureBody
     if (structureBody) {
       const cube = gc.cube;
       const localX = cube.gx - _bodyAnchor.x;
@@ -318,7 +348,7 @@ function updateCubeGrowth(dt) {
         .setFriction(0.02).setRestitution(0.05)
         .setDensity(1.0)
         .setFrictionCombineRule(RAPIER.CoefficientCombineRule.Min)
-        .setCollisionGroups(makeCollisionGroups(CG_STRUCTURE, CG_GROUND));
+        .setCollisionGroups(makeCollisionGroups(CG_STRUCTURE, CG_GROUND | CG_GROWING));
       cube.collider = world.createCollider(desc, structureBody);
     }
 
@@ -374,7 +404,7 @@ function createStructureBody() {
       .setFriction(0.02).setRestitution(0.05)
       .setDensity(1.0)
       .setFrictionCombineRule(RAPIER.CoefficientCombineRule.Min)
-      .setCollisionGroups(makeCollisionGroups(CG_STRUCTURE, CG_GROUND));
+      .setCollisionGroups(makeCollisionGroups(CG_STRUCTURE, CG_GROUND | CG_GROWING));
     c.collider = world.createCollider(desc, structureBody);
   }
 }
@@ -612,15 +642,39 @@ function _placeNextLetter() {
 
   audio.pop(q.index);
 
-  // Compute growth direction in world space (for push force)
-  const dirLocal = new THREE.Vector3(toX - fromX, toY - fromY, toZ - fromZ).normalize();
-  const dirWorld = dirLocal.clone().applyQuaternion(structureGroup.quaternion);
+  // Find the parent cube (the one we're spawning inside)
+  const parentGx = Math.round(fromX);
+  const parentGy = Math.round(fromY - 0.5);
+  const parentGz = Math.round(fromZ);
+  const parentCube = cubes.find(c =>
+    c !== cube && c.gx === parentGx && (c.gy || 0) === parentGy && c.gz === parentGz
+  );
+
+  // Temporarily remove parent's collider so kinematic body doesn't collide with it
+  _removeParentCollider(parentCube);
+
+  // Create kinematic body at parent's world position — collides with structure
+  const worldFrom = new THREE.Vector3(fromX, fromY, fromZ)
+    .applyQuaternion(structureGroup.quaternion)
+    .add(structureGroup.position);
+  const growBodyDesc = RAPIER.RigidBodyDesc.kinematicPositionBased()
+    .setTranslation(worldFrom.x, worldFrom.y, worldFrom.z)
+    .setRotation({
+      x: structureGroup.quaternion.x, y: structureGroup.quaternion.y,
+      z: structureGroup.quaternion.z, w: structureGroup.quaternion.w
+    });
+  const growBody = world.createRigidBody(growBodyDesc);
+  const growColliderDesc = RAPIER.ColliderDesc.cuboid(0.5, 0.5, 0.5)
+    .setFriction(0.02).setRestitution(0.0)
+    .setCollisionGroups(makeCollisionGroups(CG_GROWING, CG_STRUCTURE | CG_GROUND));
+  world.createCollider(growColliderDesc, growBody);
 
   const dx = toX - fromX, dy = toY - fromY, dz = toZ - fromZ;
   const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
   _growingCube = {
     cube,
-    dirWorld,
+    body: growBody,
+    parentCube,
     fromX, fromY, fromZ,
     toX, toY, toZ,
     progress: 0,

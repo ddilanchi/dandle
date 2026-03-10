@@ -6,7 +6,7 @@ import { AudioManager } from './audio.js';
 
 await RAPIER.init();
 
-const VERSION = 'v3.3.2';
+const VERSION = 'v3.3.3';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -1886,15 +1886,19 @@ function updatePhysics(dt) {
   if (levelComplete || !structureBody) return;
 
   // Accumulator pattern for fixed-step physics
-  // Clamp velocity INSIDE the loop — every single step — so impulses
-  // from kinematic overlap can't accumulate across multiple sub-steps.
-  const MAX_VEL = 1.5;
-  const MAX_ANGVEL = 1.0;
+  // Clamp velocity AND position after every sub-step to prevent
+  // kinematic overlap from launching the structure.
+  const MAX_VEL = 0.5;
+  const MAX_ANGVEL = 0.5;
+  const MAX_DISP = 0.02; // max position change per sub-step
   physicsAccumulator += dt;
   while (physicsAccumulator >= PHYS_STEP) {
+    const prevPos = structureBody.translation();
+    const px = prevPos.x, py = prevPos.y, pz = prevPos.z;
+
     world.step();
 
-    // Clamp after each sub-step
+    // Clamp velocity
     const vel = structureBody.linvel();
     const speed = Math.sqrt(vel.x * vel.x + vel.y * vel.y + vel.z * vel.z);
     if (speed > MAX_VEL) {
@@ -1906,6 +1910,17 @@ function updatePhysics(dt) {
     if (as2 > MAX_ANGVEL) {
       const s = MAX_ANGVEL / as2;
       structureBody.setAngvel({ x: av.x * s, y: av.y * s, z: av.z * s }, true);
+    }
+
+    // Clamp position displacement (prevents teleportation from penetration correction)
+    const newPos = structureBody.translation();
+    const dx = newPos.x - px, dy = newPos.y - py, dz = newPos.z - pz;
+    const disp = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    if (disp > MAX_DISP) {
+      const s = MAX_DISP / disp;
+      structureBody.setTranslation({
+        x: px + dx * s, y: py + dy * s, z: pz + dz * s
+      }, true);
     }
 
     physicsAccumulator -= PHYS_STEP;

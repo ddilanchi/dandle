@@ -6,7 +6,7 @@ import { AudioManager } from './audio.js';
 
 await RAPIER.init();
 
-const VERSION = 'v3.1.1';
+const VERSION = 'v3.1.2';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -363,8 +363,8 @@ function createStructureBody() {
       z: structureGroup.quaternion.z, w: structureGroup.quaternion.w
     })
     .setCanSleep(false)
-    .setLinearDamping(0.05)
-    .setAngularDamping(0.05);
+    .setLinearDamping(2.0)
+    .setAngularDamping(2.0);
   structureBody = world.createRigidBody(bodyDesc);
 
   // Zero velocity on creation
@@ -1891,6 +1891,22 @@ function updatePhysics(dt) {
     world.step();
     physicsAccumulator -= PHYS_STEP;
   }
+
+  // Clamp structure velocity — prevents kinematic push from launching it
+  const MAX_VEL = 2.0;
+  const vel = structureBody.linvel();
+  const speed = Math.sqrt(vel.x * vel.x + vel.y * vel.y + vel.z * vel.z);
+  if (speed > MAX_VEL) {
+    const scale = MAX_VEL / speed;
+    structureBody.setLinvel({ x: vel.x * scale, y: vel.y * scale, z: vel.z * scale }, true);
+  }
+  const avel = structureBody.angvel();
+  const aspeed = Math.sqrt(avel.x * avel.x + avel.y * avel.y + avel.z * avel.z);
+  if (aspeed > MAX_VEL) {
+    const ascale = MAX_VEL / aspeed;
+    structureBody.setAngvel({ x: avel.x * ascale, y: avel.y * ascale, z: avel.z * ascale }, true);
+  }
+
   syncGroupFromBody();
 
   // Sync debris pieces

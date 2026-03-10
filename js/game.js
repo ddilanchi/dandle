@@ -6,7 +6,7 @@ import { AudioManager } from './audio.js';
 
 await RAPIER.init();
 
-const VERSION = 'v3.5.0';
+const VERSION = 'v3.6.0';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -270,11 +270,12 @@ const BLOCK_ANIM_DURATION = 0.35; // seconds per block slide-out
 let _placementQueue = null;
 
 // ── Growth system ──
-// Purely visual animation — mesh slides from parent to target.
-// No physics body during growth. When each cube arrives, its mesh
-// snaps to final position. When the entire word finishes, a single
-// createStructureBody() rebuild adds all colliders cleanly.
-let _growingCube = null; // { cube, fromX/Y/Z, toX/Y/Z, progress, distance }
+// Visual mesh slides from parent center to target. Kinematic physics
+// body is created at the EDGE of the parent (small overlap) and slides
+// to the target. It collides with structure + ground, creating a real
+// physics push. The floor constrains below, the structure is pushed.
+const PHYS_START_T = 0.55; // kinematic body appears when mesh is 55% of the way
+let _growingCube = null; // { cube, body, fromX/Y/Z, toX/Y/Z, progress, distance, physCreated }
 
 function updateCubeGrowth(dt) {
   if (!_growingCube) return;
@@ -290,10 +291,48 @@ function updateCubeGrowth(dt) {
   const py = gc.fromY + (gc.toY - gc.fromY) * t;
   const pz = gc.fromZ + (gc.toZ - gc.fromZ) * t;
 
+  // Visual mesh always tracks interpolated position
   gc.cube.mesh.position.set(px, py, pz);
+
+  // Create kinematic physics body once mesh passes the edge of the parent
+  if (!gc.physCreated && t >= PHYS_START_T) {
+    gc.physCreated = true;
+    const startX = gc.fromX + (gc.toX - gc.fromX) * PHYS_START_T;
+    const startY = gc.fromY + (gc.toY - gc.fromY) * PHYS_START_T;
+    const startZ = gc.fromZ + (gc.toZ - gc.fromZ) * PHYS_START_T;
+    const worldStart = new THREE.Vector3(startX, startY, startZ)
+      .applyQuaternion(structureGroup.quaternion)
+      .add(structureGroup.position);
+    const growBodyDesc = RAPIER.RigidBodyDesc.kinematicPositionBased()
+      .setTranslation(worldStart.x, worldStart.y, worldStart.z)
+      .setRotation({
+        x: structureGroup.quaternion.x, y: structureGroup.quaternion.y,
+        z: structureGroup.quaternion.z, w: structureGroup.quaternion.w
+      });
+    gc.body = world.createRigidBody(growBodyDesc);
+    const colliderDesc = RAPIER.ColliderDesc.cuboid(0.5, 0.5, 0.5)
+      .setFriction(0.5).setRestitution(0.0)
+      .setCollisionGroups(makeCollisionGroups(CG_GROWING, CG_STRUCTURE | CG_GROUND));
+    world.createCollider(colliderDesc, gc.body);
+  }
+
+  // Move kinematic body if it exists
+  if (gc.body) {
+    const worldPos = new THREE.Vector3(px, py, pz)
+      .applyQuaternion(structureGroup.quaternion)
+      .add(structureGroup.position);
+    gc.body.setNextKinematicTranslation({ x: worldPos.x, y: worldPos.y, z: worldPos.z });
+    gc.body.setNextKinematicRotation({
+      x: structureGroup.quaternion.x, y: structureGroup.quaternion.y,
+      z: structureGroup.quaternion.z, w: structureGroup.quaternion.w
+    });
+  }
 
   if (t >= 1) {
     gc.cube.mesh.position.set(gc.toX, gc.toY, gc.toZ);
+
+    // Remove kinematic body
+    if (gc.body) world.removeRigidBody(gc.body);
 
     _growingCube = null;
     // Advance to next letter in queue
@@ -343,7 +382,7 @@ function createStructureBody() {
       .setFriction(0.02).setRestitution(0.05)
       .setDensity(1.0)
       .setFrictionCombineRule(RAPIER.CoefficientCombineRule.Min)
-      .setCollisionGroups(makeCollisionGroups(CG_STRUCTURE, CG_GROUND));
+      .setCollisionGroups(makeCollisionGroups(CG_STRUCTURE, CG_GROUND | CG_GROWING));
     c.collider = world.createCollider(desc, structureBody);
   }
 }
@@ -604,6 +643,8 @@ function _placeNextLetter() {
   const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
   _growingCube = {
     cube,
+    body: null,
+    physCreated: false,
     fromX, fromY, fromZ,
     toX, toY, toZ,
     progress: 0,

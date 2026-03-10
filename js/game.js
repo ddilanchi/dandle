@@ -6,7 +6,7 @@ import { AudioManager } from './audio.js';
 
 await RAPIER.init();
 
-const VERSION = 'v3.0.0';
+const VERSION = 'v3.0.1';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -269,12 +269,11 @@ const BLOCK_ANIM_DURATION = 0.35; // seconds per block slide-out
 // ── Sequential letter placement queue ──
 let _placementQueue = null;
 
-// ── Kinematic growth system ──
-// Each new cube is its own kinematic physics body that physically slides
-// from the parent position to its target. Collision-filtered to ignore
-// the structure but interact with ground/walls. When each cube arrives,
-// a collider is added directly to the structureBody (no rebuild needed).
-let _growingCube = null; // { cube, body, fromX/Y/Z, toX/Y/Z, progress, distance }
+// ── Growth animation system ──
+// Growth is purely visual (mesh slide + scale). No physics body during transit.
+// When the cube arrives at its target, a collider is added directly to the
+// structureBody — no body rebuild, no phantom collisions during growth.
+let _growingCube = null; // { cube, fromX/Y/Z, toX/Y/Z, progress, distance }
 
 function updateCubeGrowth(dt) {
   if (!_growingCube) return;
@@ -290,46 +289,24 @@ function updateCubeGrowth(dt) {
   const py = gc.fromY + (gc.toY - gc.fromY) * t;
   const pz = gc.fromZ + (gc.toZ - gc.fromZ) * t;
 
-  // Mesh position + scale
+  // Mesh position + scale (visual only, no physics during growth)
   gc.cube.mesh.position.set(px, py, pz);
   const s = Math.max(t, 0.01);
   gc.cube.mesh.scale.set(s, s, s);
-
-  // Move kinematic body in world space (follows group transform)
-  const worldPos = new THREE.Vector3(px, py, pz)
-    .applyQuaternion(structureGroup.quaternion)
-    .add(structureGroup.position);
-  gc.body.setNextKinematicTranslation({ x: worldPos.x, y: worldPos.y, z: worldPos.z });
-  gc.body.setNextKinematicRotation({
-    x: structureGroup.quaternion.x, y: structureGroup.quaternion.y,
-    z: structureGroup.quaternion.z, w: structureGroup.quaternion.w
-  });
 
   if (t >= 1) {
     gc.cube.mesh.position.set(gc.toX, gc.toY, gc.toZ);
     gc.cube.mesh.scale.set(1, 1, 1);
 
-    // Remove kinematic body
-    world.removeRigidBody(gc.body);
-
-    // Add collider directly to structureBody (no full rebuild needed)
+    // Add collider directly to structureBody using grid-based offset
     if (structureBody) {
       const cube = gc.cube;
-      const worldTarget = new THREE.Vector3(cube.gx, 0.5 + (cube.gy || 0), cube.gz)
-        .applyQuaternion(structureGroup.quaternion)
-        .add(structureGroup.position);
-      const bodyPos = structureBody.translation();
-      const bodyRot = structureBody.rotation();
-      const bodyQ = new THREE.Quaternion(bodyRot.x, bodyRot.y, bodyRot.z, bodyRot.w);
-      const bodyQInv = bodyQ.clone().invert();
-      const localOffset = new THREE.Vector3(
-        worldTarget.x - bodyPos.x,
-        worldTarget.y - bodyPos.y,
-        worldTarget.z - bodyPos.z
-      ).applyQuaternion(bodyQInv);
+      const localX = cube.gx - _bodyAnchor.x;
+      const localY = (0.5 + (cube.gy || 0)) - _bodyAnchor.y;
+      const localZ = cube.gz - _bodyAnchor.z;
 
       const desc = RAPIER.ColliderDesc.cuboid(0.5, 0.5, 0.5)
-        .setTranslation(localOffset.x, localOffset.y, localOffset.z)
+        .setTranslation(localX, localY, localZ)
         .setFriction(0.02).setRestitution(0.05)
         .setDensity(1.0)
         .setFrictionCombineRule(RAPIER.CoefficientCombineRule.Min)
@@ -628,22 +605,11 @@ function _placeNextLetter() {
 
   audio.pop(q.index);
 
-  // Create kinematic physics body at parent's world position
-  const worldFrom = new THREE.Vector3(fromX, fromY, fromZ)
-    .applyQuaternion(structureGroup.quaternion)
-    .add(structureGroup.position);
-  const growBodyDesc = RAPIER.RigidBodyDesc.kinematicPositionBased()
-    .setTranslation(worldFrom.x, worldFrom.y, worldFrom.z);
-  const growBody = world.createRigidBody(growBodyDesc);
-  const growColliderDesc = RAPIER.ColliderDesc.cuboid(0.5, 0.5, 0.5)
-    .setCollisionGroups(makeCollisionGroups(CG_GROWING, CG_GROUND));
-  world.createCollider(growColliderDesc, growBody);
-
+  // Pure visual growth — no physics body during transit
   const dx = toX - fromX, dy = toY - fromY, dz = toZ - fromZ;
   const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
   _growingCube = {
     cube,
-    body: growBody,
     fromX, fromY, fromZ,
     toX, toY, toZ,
     progress: 0,

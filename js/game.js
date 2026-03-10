@@ -4,7 +4,7 @@ import * as CANNON from 'cannon-es';
 import { getRandomWord, isValidWord, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v2.1.1';
+const VERSION = 'v2.2.0';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -235,6 +235,13 @@ const world = new CANNON.World({ gravity: new CANNON.Vec3(0, -GRAVITY, 0) });
 world.broadphase = new CANNON.SAPBroadphase(world);
 world.allowSleep = false;
 
+// Collision filter groups
+const CG_GROUND = 1;    // ground, walls, debris
+const CG_STRUCTURE = 2; // the main compound structure body
+const CG_GROWING = 4;   // kinematic cubes sliding into position
+
+const TRANSLATE_SPEED = 3; // units per second — how fast new cubes slide in
+
 const groundMat = new CANNON.Material('ground');
 const structureMat = new CANNON.Material('structure');
 world.addContactMaterial(new CANNON.ContactMaterial(groundMat, structureMat, {
@@ -262,36 +269,48 @@ const BLOCK_ANIM_DURATION = 0.35; // seconds per block slide-out
 // ── Sequential letter placement queue ──
 let _placementQueue = null;
 
-// ── Visual growth system ──
-// Growing cubes are visual only (no physics). When growth completes,
-// addCubeShape() snaps a shape onto the existing body (no rebuild).
-let _growingCube = null; // only one cube grows at a time
+// ── Kinematic growth system ──
+// Each new cube is its own kinematic physics body that physically slides
+// from the parent position to its target. Collision-filtered to ignore
+// the structure but interact with ground/walls. When the entire word is
+// placed, a single createStructureBody() rebuild merges everything.
+let _growingCube = null; // { cube, body, fromX/Y/Z, toX/Y/Z, progress, distance }
 
-function updateCubeGrowth() {
+function updateCubeGrowth(dt) {
   if (!_growingCube) return;
   const gc = _growingCube;
-  const now = performance.now() / 1000;
-  const elapsed = now - gc.startTime;
-  const t = Math.min(elapsed / BLOCK_ANIM_DURATION, 1);
-  const ease = t < 1 ? 1 - Math.pow(1 - t, 3) : 1; // ease-out cubic
 
-  // Mesh position: slide from previous letter to target (visual only)
-  gc.cube.mesh.position.set(
-    gc.fromX + (gc.toX - gc.fromX) * ease,
-    gc.fromY + (gc.toY - gc.fromY) * ease,
-    gc.fromZ + (gc.toZ - gc.fromZ) * ease,
-  );
+  // Advance at constant speed
+  const step = (TRANSLATE_SPEED * dt) / Math.max(gc.distance, 0.01);
+  gc.progress = Math.min(gc.progress + step, 1);
+  const t = gc.progress;
 
-  // Mesh scale grows (visual only — no physics involvement during growth)
-  const s = Math.max(ease, 0.01);
+  // Interpolate local position (group-local space)
+  const px = gc.fromX + (gc.toX - gc.fromX) * t;
+  const py = gc.fromY + (gc.toY - gc.fromY) * t;
+  const pz = gc.fromZ + (gc.toZ - gc.fromZ) * t;
+
+  // Mesh position + scale
+  gc.cube.mesh.position.set(px, py, pz);
+  const s = Math.max(t, 0.01);
   gc.cube.mesh.scale.set(s, s, s);
+
+  // Move kinematic body in world space (follows group transform)
+  const worldPos = new THREE.Vector3(px, py, pz)
+    .applyQuaternion(structureGroup.quaternion)
+    .add(structureGroup.position);
+  gc.body.position.set(worldPos.x, worldPos.y, worldPos.z);
+  gc.body.quaternion.set(
+    structureGroup.quaternion.x, structureGroup.quaternion.y,
+    structureGroup.quaternion.z, structureGroup.quaternion.w
+  );
 
   if (t >= 1) {
     gc.cube.mesh.position.set(gc.toX, gc.toY, gc.toZ);
     gc.cube.mesh.scale.set(1, 1, 1);
+    // Remove kinematic body — cube is now just a mesh until rebuild
+    world.removeBody(gc.body);
     _growingCube = null;
-    // Snap shape onto existing body — no rebuild
-    addCubeShape(gc.cube);
     // Advance to next letter in queue
     if (_placementQueue) {
       _placementQueue.index++;
@@ -301,42 +320,6 @@ function updateCubeGrowth() {
 }
 
 // ── Cannon body management ──
-
-// Add a single cube's shape to the existing body (no rebuild, no teleport).
-// Recomputes _comLocal from the body's ACTUAL world position so the offset
-// is always correct — even if the body drifted before being frozen.
-function addCubeShape(cube) {
-  if (!structureBody) return;
-
-  // Reverse-engineer _comLocal from the body's actual world position.
-  // syncGroupFromBody does: groupPos = bodyPos - R * _comLocal
-  // so: _comLocal = R⁻¹ * (bodyPos - groupPos)
-  const q = new THREE.Quaternion(
-    structureBody.quaternion.x, structureBody.quaternion.y,
-    structureBody.quaternion.z, structureBody.quaternion.w
-  );
-  const qInv = q.clone().invert();
-  const actualCOM = new THREE.Vector3(
-    structureBody.position.x - structureGroup.position.x,
-    structureBody.position.y - structureGroup.position.y,
-    structureBody.position.z - structureGroup.position.z
-  ).applyQuaternion(qInv);
-  _comLocal.copy(actualCOM);
-
-  const half = new CANNON.Vec3(0.47, 0.47, 0.47);
-  const offset = new CANNON.Vec3(
-    cube.gx - _comLocal.x,
-    (0.5 + (cube.gy || 0)) - _comLocal.y,
-    cube.gz - _comLocal.z
-  );
-  structureBody.addShape(new CANNON.Box(half), offset);
-
-  // Update mass (count non-growing cubes)
-  const solidCount = cubes.filter(c => c !== (_growingCube && _growingCube.cube)).length;
-  structureBody.mass = solidCount;
-  structureBody.updateMassProperties();
-  structureBody.updateBoundingRadius();
-}
 
 function createStructureBody() {
   const oldBody = structureBody;
@@ -359,6 +342,8 @@ function createStructureBody() {
     mass: cubes.length,
     type: CANNON.Body.DYNAMIC,
     material: structureMat,
+    collisionFilterGroup: CG_STRUCTURE,
+    collisionFilterMask: CG_GROUND,
     linearDamping: 0.05,
     angularDamping: 0.05,
   });
@@ -585,6 +570,8 @@ function _placeNextLetter() {
   if (q.index >= q.letters.length) {
     _placementQueue = null;
     clearGhosts();
+    // All letters placed — single rebuild to merge into compound body
+    createStructureBody();
     // Select the last letter of the word
     const dv = q.dirVec;
     const lastIdx = q.text.length - 1;
@@ -614,30 +601,46 @@ function _placeNextLetter() {
   const fromZ = prev ? prev.gz : (l.gz - q.dirVec.z);
   const toX = l.gx, toY = 0.5 + l.gy, toZ = l.gz;
 
-  // Start tiny at previous letter's position
+  // Start tiny at parent position
   mesh.position.set(fromX, fromY, fromZ);
   mesh.scale.set(0.01, 0.01, 0.01);
 
   structureGroup.add(mesh);
 
-  // Add to cubes[] — no physics until growth completes (visual only during animation)
   const cube = { letter: l.letter, gx: l.gx, gy: l.gy, gz: l.gz, mesh, wordIdx: l.wordIdx };
   mesh.userData.cube = cube;
   cubes.push(cube);
 
-  // Clear all ghosts on first letter (no per-ghost fade to avoid z-fighting)
+  // Clear all ghosts on first letter
   if (q.index === 0) clearGhosts();
 
-  const now = performance.now() / 1000;
   audio.pop(q.index);
 
-  // Start visual growth — updateCubeGrowth() handles position, scale,
-  // and calls addCubeShape() when done (no body rebuild)
+  // Create kinematic physics body at parent's world position
+  const worldFrom = new THREE.Vector3(fromX, fromY, fromZ)
+    .applyQuaternion(structureGroup.quaternion)
+    .add(structureGroup.position);
+  const growBody = new CANNON.Body({
+    type: CANNON.Body.KINEMATIC,
+    collisionFilterGroup: CG_GROWING,
+    collisionFilterMask: CG_GROUND,
+  });
+  growBody.addShape(new CANNON.Box(new CANNON.Vec3(0.47, 0.47, 0.47)));
+  growBody.position.set(worldFrom.x, worldFrom.y, worldFrom.z);
+  growBody.quaternion.set(
+    structureGroup.quaternion.x, structureGroup.quaternion.y,
+    structureGroup.quaternion.z, structureGroup.quaternion.w
+  );
+  world.addBody(growBody);
+
+  const dx = toX - fromX, dy = toY - fromY, dz = toZ - fromZ;
   _growingCube = {
     cube,
-    startTime: now,
+    body: growBody,
     fromX, fromY, fromZ,
     toX, toY, toZ,
+    progress: 0,
+    distance: Math.sqrt(dx * dx + dy * dy + dz * dz),
   };
 }
 
@@ -1880,22 +1883,6 @@ function cubeWorldPos(c) {
 function updatePhysics(dt) {
   if (levelComplete || !structureBody) return;
 
-  // Make structure STATIC during letter placement — STATIC bodies don't
-  // integrate at all, so zero drift/rotation. Restored to DYNAMIC when done.
-  const isPlacing = !!(_placementQueue || _growingCube);
-  if (isPlacing && structureBody.type !== CANNON.Body.STATIC) {
-    structureBody.type = CANNON.Body.STATIC;
-    structureBody.mass = 0;
-    structureBody.velocity.setZero();
-    structureBody.angularVelocity.setZero();
-    structureBody.updateMassProperties();
-  } else if (!isPlacing && structureBody.type === CANNON.Body.STATIC) {
-    const solidCount = cubes.length;
-    structureBody.type = CANNON.Body.DYNAMIC;
-    structureBody.mass = solidCount;
-    structureBody.updateMassProperties();
-  }
-
   // Step cannon world
   world.step(1 / 120, dt, 5);
   syncGroupFromBody();
@@ -1982,7 +1969,7 @@ function animate() {
 
   if (!paused) {
     updateAnimations();
-    updateCubeGrowth();
+    updateCubeGrowth(dt);
     updateLetterZones();
     updateDirectionArrow();
     audio.setMusicIntensity(cubes.length);

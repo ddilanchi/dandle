@@ -6,7 +6,7 @@ import { AudioManager } from './audio.js';
 
 await RAPIER.init();
 
-const VERSION = 'v3.3.3';
+const VERSION = 'v3.4.0';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -321,7 +321,7 @@ function updateCubeGrowth(dt) {
         .setFriction(0.02).setRestitution(0.05)
         .setDensity(1.0)
         .setFrictionCombineRule(RAPIER.CoefficientCombineRule.Min)
-        .setCollisionGroups(makeCollisionGroups(CG_STRUCTURE, CG_GROUND | CG_GROWING));
+        .setCollisionGroups(makeCollisionGroups(CG_STRUCTURE, CG_GROUND));
       cube.collider = world.createCollider(desc, structureBody);
     }
 
@@ -363,8 +363,8 @@ function createStructureBody() {
       z: structureGroup.quaternion.z, w: structureGroup.quaternion.w
     })
     .setCanSleep(false)
-    .setLinearDamping(2.0)
-    .setAngularDamping(2.0);
+    .setLinearDamping(0.1)
+    .setAngularDamping(0.1);
   structureBody = world.createRigidBody(bodyDesc);
 
   // Zero velocity on creation
@@ -377,7 +377,7 @@ function createStructureBody() {
       .setFriction(0.02).setRestitution(0.05)
       .setDensity(1.0)
       .setFrictionCombineRule(RAPIER.CoefficientCombineRule.Min)
-      .setCollisionGroups(makeCollisionGroups(CG_STRUCTURE, CG_GROUND | CG_GROWING));
+      .setCollisionGroups(makeCollisionGroups(CG_STRUCTURE, CG_GROUND));
     c.collider = world.createCollider(desc, structureBody);
   }
 }
@@ -628,7 +628,7 @@ function _placeNextLetter() {
   const growBody = world.createRigidBody(growBodyDesc);
   const growColliderDesc = RAPIER.ColliderDesc.cuboid(0.5, 0.5, 0.5)
     .setFriction(0.02).setRestitution(0.0)
-    .setCollisionGroups(makeCollisionGroups(CG_GROWING, CG_STRUCTURE | CG_GROUND));
+    .setCollisionGroups(makeCollisionGroups(CG_GROWING, CG_GROUND));
   world.createCollider(growColliderDesc, growBody);
 
   const dx = toX - fromX, dy = toY - fromY, dz = toZ - fromZ;
@@ -1886,46 +1886,11 @@ function updatePhysics(dt) {
   if (levelComplete || !structureBody) return;
 
   // Accumulator pattern for fixed-step physics
-  // Clamp velocity AND position after every sub-step to prevent
-  // kinematic overlap from launching the structure.
-  const MAX_VEL = 0.5;
-  const MAX_ANGVEL = 0.5;
-  const MAX_DISP = 0.02; // max position change per sub-step
   physicsAccumulator += dt;
   while (physicsAccumulator >= PHYS_STEP) {
-    const prevPos = structureBody.translation();
-    const px = prevPos.x, py = prevPos.y, pz = prevPos.z;
-
     world.step();
-
-    // Clamp velocity
-    const vel = structureBody.linvel();
-    const speed = Math.sqrt(vel.x * vel.x + vel.y * vel.y + vel.z * vel.z);
-    if (speed > MAX_VEL) {
-      const s = MAX_VEL / speed;
-      structureBody.setLinvel({ x: vel.x * s, y: vel.y * s, z: vel.z * s }, true);
-    }
-    const av = structureBody.angvel();
-    const as2 = Math.sqrt(av.x * av.x + av.y * av.y + av.z * av.z);
-    if (as2 > MAX_ANGVEL) {
-      const s = MAX_ANGVEL / as2;
-      structureBody.setAngvel({ x: av.x * s, y: av.y * s, z: av.z * s }, true);
-    }
-
-    // Clamp position displacement (prevents teleportation from penetration correction)
-    const newPos = structureBody.translation();
-    const dx = newPos.x - px, dy = newPos.y - py, dz = newPos.z - pz;
-    const disp = Math.sqrt(dx * dx + dy * dy + dz * dz);
-    if (disp > MAX_DISP) {
-      const s = MAX_DISP / disp;
-      structureBody.setTranslation({
-        x: px + dx * s, y: py + dy * s, z: pz + dz * s
-      }, true);
-    }
-
     physicsAccumulator -= PHYS_STEP;
   }
-
   syncGroupFromBody();
 
   // Sync debris pieces

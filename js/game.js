@@ -4,7 +4,7 @@ import * as CANNON from 'cannon-es';
 import { getRandomWord, isValidWord, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v2.2.1-debug';
+const VERSION = 'v2.2.2-debug';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -323,7 +323,7 @@ function updateCubeGrowth(dt) {
       `\n  final local=(${gc.toX.toFixed(2)}, ${gc.toY.toFixed(2)}, ${gc.toZ.toFixed(2)})`,
       `\n  final world=(${finalWorld.x.toFixed(3)}, ${finalWorld.y.toFixed(3)}, ${finalWorld.z.toFixed(3)})`,
       `\n  body world=(${gc.body.position.x.toFixed(3)}, ${gc.body.position.y.toFixed(3)}, ${gc.body.position.z.toFixed(3)})`,
-      `\n  bottom of box = ${(gc.body.position.y - 0.47).toFixed(3)} (ground=0)`,
+      `\n  bottom of box = ${(gc.body.position.y - 0.5).toFixed(3)} (ground=0)`,
     );
 
     // Remove kinematic body — cube is now just a mesh until rebuild
@@ -367,7 +367,7 @@ function createStructureBody() {
   });
 
   for (const c of cubes) {
-    const half = new CANNON.Vec3(0.47, 0.47, 0.47);
+    const half = new CANNON.Vec3(0.5, 0.5, 0.5);
     body.addShape(
       new CANNON.Box(half),
       new CANNON.Vec3(c.gx - cx, (0.5 + (c.gy || 0)) - cy, c.gz - cz)
@@ -415,7 +415,7 @@ function createStructureBody() {
     `\n  type=${body.type === CANNON.Body.DYNAMIC ? 'DYNAMIC' : body.type === CANNON.Body.STATIC ? 'STATIC' : 'KINEMATIC'}`,
     `\n  group=${body.collisionFilterGroup} mask=${body.collisionFilterMask}`,
     `\n  shape bottoms:`, body.shapeOffsets.map((o, i) =>
-      `shape${i} offset.y=${o.y.toFixed(3)} worldBottom=${(body.position.y + o.y - 0.47).toFixed(3)}`
+      `shape${i} offset.y=${o.y.toFixed(3)} worldBottom=${(body.position.y + o.y - 0.5).toFixed(3)}`
     ).join(', '),
   );
 }
@@ -679,7 +679,7 @@ function _placeNextLetter() {
     collisionFilterGroup: CG_GROWING,
     collisionFilterMask: CG_GROUND,
   });
-  growBody.addShape(new CANNON.Box(new CANNON.Vec3(0.47, 0.47, 0.47)));
+  growBody.addShape(new CANNON.Box(new CANNON.Vec3(0.5, 0.5, 0.5)));
   growBody.position.set(worldFrom.x, worldFrom.y, worldFrom.z);
   growBody.quaternion.set(
     structureGroup.quaternion.x, structureGroup.quaternion.y,
@@ -1069,7 +1069,7 @@ function _spawnDebris(debrisCubes) {
     linearDamping: 0.05,
     angularDamping: 0.05,
   });
-  const half = new CANNON.Vec3(0.47, 0.47, 0.47);
+  const half = new CANNON.Vec3(0.5, 0.5, 0.5);
   for (const c of debrisCubes) {
     body.addShape(
       new CANNON.Box(half),

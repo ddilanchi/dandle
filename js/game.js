@@ -6,7 +6,7 @@ import { AudioManager } from './audio.js';
 
 await RAPIER.init();
 
-const VERSION = 'v3.1.0';
+const VERSION = 'v3.1.1';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -247,7 +247,7 @@ function makeCollisionGroups(membership, filter) {
   return (membership << 16) | filter;
 }
 
-const TRANSLATE_SPEED = 3; // units per second — how fast new cubes slide in
+const TRANSLATE_SPEED = 1; // units per second — how fast new cubes slide in
 
 let structureBody = null;  // rapier rigid body for the whole structure
 let _bodyAnchor = { x: 0, y: 0, z: 0 }; // local-space anchor (avg of cube positions)

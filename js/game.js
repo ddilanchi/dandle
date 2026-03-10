@@ -4,7 +4,7 @@ import * as CANNON from 'cannon-es';
 import { getRandomWord, isValidWord, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v2.2.0';
+const VERSION = 'v2.2.1-debug';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -242,6 +242,13 @@ const CG_GROWING = 4;   // kinematic cubes sliding into position
 
 const TRANSLATE_SPEED = 3; // units per second — how fast new cubes slide in
 
+// ── Physics debug logging ──
+const PHYS_DEBUG = true;
+let _debugFrameCount = 0;
+let _debugPlacementActive = false;
+function physLog(...args) { if (PHYS_DEBUG) console.log(`[PHYS f${_debugFrameCount}]`, ...args); }
+function physWarn(...args) { if (PHYS_DEBUG) console.warn(`[PHYS f${_debugFrameCount}]`, ...args); }
+
 const groundMat = new CANNON.Material('ground');
 const structureMat = new CANNON.Material('structure');
 world.addContactMaterial(new CANNON.ContactMaterial(groundMat, structureMat, {
@@ -308,6 +315,17 @@ function updateCubeGrowth(dt) {
   if (t >= 1) {
     gc.cube.mesh.position.set(gc.toX, gc.toY, gc.toZ);
     gc.cube.mesh.scale.set(1, 1, 1);
+
+    const finalWorld = new THREE.Vector3(gc.toX, gc.toY, gc.toZ)
+      .applyQuaternion(structureGroup.quaternion)
+      .add(structureGroup.position);
+    physLog(`KINEMATIC ARRIVED letter="${gc.cube.letter}"`,
+      `\n  final local=(${gc.toX.toFixed(2)}, ${gc.toY.toFixed(2)}, ${gc.toZ.toFixed(2)})`,
+      `\n  final world=(${finalWorld.x.toFixed(3)}, ${finalWorld.y.toFixed(3)}, ${finalWorld.z.toFixed(3)})`,
+      `\n  body world=(${gc.body.position.x.toFixed(3)}, ${gc.body.position.y.toFixed(3)}, ${gc.body.position.z.toFixed(3)})`,
+      `\n  bottom of box = ${(gc.body.position.y - 0.47).toFixed(3)} (ground=0)`,
+    );
+
     // Remove kinematic body — cube is now just a mesh until rebuild
     world.removeBody(gc.body);
     _growingCube = null;
@@ -372,8 +390,34 @@ function createStructureBody() {
     body.angularVelocity.copy(oldBody.angularVelocity);
   }
 
+  // Debug: log collisions on the structure body
+  if (PHYS_DEBUG) {
+    body.addEventListener('collide', (e) => {
+      const impact = e.contact.getImpactVelocityAlongNormal();
+      if (Math.abs(impact) > 0.5) {
+        physWarn(`STRUCTURE COLLISION impact=${impact.toFixed(3)}`,
+          `otherBody.id=${e.body.id} otherType=${e.body.type}`,
+          `structureVelY=${body.velocity.y.toFixed(3)}`,
+        );
+      }
+    });
+  }
+
   world.addBody(body);
   structureBody = body;
+
+  physLog(`CREATE STRUCTURE BODY`,
+    `\n  cubes: ${cubes.length}, mass: ${body.mass}, shapes: ${body.shapes.length}`,
+    `\n  COM local=(${cx.toFixed(3)}, ${cy.toFixed(3)}, ${cz.toFixed(3)})`,
+    `\n  body pos=(${body.position.x.toFixed(3)}, ${body.position.y.toFixed(3)}, ${body.position.z.toFixed(3)})`,
+    `\n  group pos=(${structureGroup.position.x.toFixed(3)}, ${structureGroup.position.y.toFixed(3)}, ${structureGroup.position.z.toFixed(3)})`,
+    `\n  vel=(${body.velocity.x.toFixed(3)}, ${body.velocity.y.toFixed(3)}, ${body.velocity.z.toFixed(3)})`,
+    `\n  type=${body.type === CANNON.Body.DYNAMIC ? 'DYNAMIC' : body.type === CANNON.Body.STATIC ? 'STATIC' : 'KINEMATIC'}`,
+    `\n  group=${body.collisionFilterGroup} mask=${body.collisionFilterMask}`,
+    `\n  shape bottoms:`, body.shapeOffsets.map((o, i) =>
+      `shape${i} offset.y=${o.y.toFixed(3)} worldBottom=${(body.position.y + o.y - 0.47).toFixed(3)}`
+    ).join(', '),
+  );
 }
 
 function syncGroupFromBody() {
@@ -560,6 +604,11 @@ function placeWord(text, startGx, startGz, dir, wordIdx, animated = false, start
     startGy,
     startGz,
   };
+  _debugPlacementActive = true;
+  physLog(`WORD PLACEMENT START text="${text}" letters=${letters.length} dir=${dir}`,
+    `\n  structureBody pos=(${structureBody ? structureBody.position.x.toFixed(3)+', '+structureBody.position.y.toFixed(3)+', '+structureBody.position.z.toFixed(3) : 'null'})`,
+    `\n  structureBody vel=(${structureBody ? structureBody.velocity.x.toFixed(3)+', '+structureBody.velocity.y.toFixed(3)+', '+structureBody.velocity.z.toFixed(3) : 'null'})`,
+  );
   _placeNextLetter(); // start first one immediately
 }
 
@@ -571,6 +620,11 @@ function _placeNextLetter() {
     _placementQueue = null;
     clearGhosts();
     // All letters placed — single rebuild to merge into compound body
+    physLog('WORD COMPLETE — rebuilding structure body.',
+      'cubes:', cubes.length,
+      'structureBody pos:', structureBody ? `(${structureBody.position.x.toFixed(3)}, ${structureBody.position.y.toFixed(3)}, ${structureBody.position.z.toFixed(3)})` : 'null',
+      'structureBody vel:', structureBody ? `(${structureBody.velocity.x.toFixed(3)}, ${structureBody.velocity.y.toFixed(3)}, ${structureBody.velocity.z.toFixed(3)})` : 'null',
+    );
     createStructureBody();
     // Select the last letter of the word
     const dv = q.dirVec;
@@ -634,14 +688,25 @@ function _placeNextLetter() {
   world.addBody(growBody);
 
   const dx = toX - fromX, dy = toY - fromY, dz = toZ - fromZ;
+  const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
   _growingCube = {
     cube,
     body: growBody,
     fromX, fromY, fromZ,
     toX, toY, toZ,
     progress: 0,
-    distance: Math.sqrt(dx * dx + dy * dy + dz * dz),
+    distance: dist,
   };
+
+  physLog(`KINEMATIC CREATED letter="${l.letter}" idx=${q.index}`,
+    `\n  from local=(${fromX.toFixed(2)}, ${fromY.toFixed(2)}, ${fromZ.toFixed(2)})`,
+    `\n  to   local=(${toX.toFixed(2)}, ${toY.toFixed(2)}, ${toZ.toFixed(2)})`,
+    `\n  from world=(${worldFrom.x.toFixed(3)}, ${worldFrom.y.toFixed(3)}, ${worldFrom.z.toFixed(3)})`,
+    `\n  distance=${dist.toFixed(3)}`,
+    `\n  body.id=${growBody.id} type=KINEMATIC group=${CG_GROWING} mask=${CG_GROUND}`,
+    `\n  structureBody pos=(${structureBody ? structureBody.position.x.toFixed(3)+', '+structureBody.position.y.toFixed(3)+', '+structureBody.position.z.toFixed(3) : 'null'})`,
+    `\n  groupPos=(${structureGroup.position.x.toFixed(3)}, ${structureGroup.position.y.toFixed(3)}, ${structureGroup.position.z.toFixed(3)})`,
+  );
 }
 
 function _arrowAlwaysOnTop(arrow) {
@@ -1883,9 +1948,44 @@ function cubeWorldPos(c) {
 function updatePhysics(dt) {
   if (levelComplete || !structureBody) return;
 
+  _debugFrameCount++;
+
+  const velBefore = structureBody.velocity.y;
+  const posBefore = structureBody.position.y;
+
   // Step cannon world
   world.step(1 / 120, dt, 5);
   syncGroupFromBody();
+
+  const velAfter = structureBody.velocity.y;
+  const posAfter = structureBody.position.y;
+  const velDelta = velAfter - velBefore;
+
+  // Log velocity spikes (the "launch")
+  if (Math.abs(velDelta) > 1.0) {
+    physWarn(`VELOCITY SPIKE! velY: ${velBefore.toFixed(3)} → ${velAfter.toFixed(3)} (Δ=${velDelta.toFixed(3)})`,
+      `\n  posY: ${posBefore.toFixed(3)} → ${posAfter.toFixed(3)}`,
+      `\n  body type=${structureBody.type} mass=${structureBody.mass}`,
+      `\n  shapes=${structureBody.shapes.length}`,
+      `\n  isPlacing=${!!(_placementQueue || _growingCube)}`,
+      `\n  world.bodies=${world.bodies.length}`,
+    );
+  }
+
+  // Log first 10 frames after placement ends
+  if (_debugPlacementActive && !_placementQueue && !_growingCube) {
+    _debugPlacementActive = false;
+    physLog('PLACEMENT ENDED — monitoring next 10 frames');
+    structureBody._debugCountdown = 10;
+  }
+  if (structureBody._debugCountdown > 0) {
+    structureBody._debugCountdown--;
+    physLog(`POST-REBUILD f${10 - structureBody._debugCountdown}/10`,
+      `posY=${posAfter.toFixed(4)} velY=${velAfter.toFixed(4)}`,
+      `shapes=${structureBody.shapes.length} mass=${structureBody.mass}`,
+      `type=${structureBody.type === CANNON.Body.DYNAMIC ? 'DYN' : 'STAT'}`,
+    );
+  }
 
   // Sync debris pieces
   for (const d of debrisPieces) {

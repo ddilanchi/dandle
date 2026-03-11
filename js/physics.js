@@ -9,21 +9,21 @@ const SOLVER_ITERATIONS = 8;
 const CUBE_HALF = 0.5;
 
 // Structure body
-const STRUCT_FRICTION = 0.5;
+const STRUCT_FRICTION = 0.1;
 const STRUCT_RESTITUTION = 0.02;
 const STRUCT_DENSITY = 1.0;
-const STRUCT_LINEAR_DAMPING = 0.3;
-const STRUCT_ANGULAR_DAMPING = 0.3;
+const STRUCT_LINEAR_DAMPING = 0.15;
+const STRUCT_ANGULAR_DAMPING = 0.15;
 
 // Static geometry
-const STATIC_FRICTION = 0.8;
+const STATIC_FRICTION = 0.3;
 const STATIC_RESTITUTION = 0.0;
 
 // Debris
-const DEBRIS_FRICTION = 0.4;
+const DEBRIS_FRICTION = 0.2;
 const DEBRIS_RESTITUTION = 0.05;
-const DEBRIS_LINEAR_DAMPING = 0.2;
-const DEBRIS_ANGULAR_DAMPING = 0.2;
+const DEBRIS_LINEAR_DAMPING = 0.1;
+const DEBRIS_ANGULAR_DAMPING = 0.1;
 
 // ── Collision groups ──
 // Membership is upper 16 bits, filter is lower 16 bits.

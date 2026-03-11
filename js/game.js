@@ -486,7 +486,7 @@ function _placeNextLetter() {
     }
 
     // Apply push impulse in build direction
-    const pushStrength = 2.0 * q.letters.length;
+    const pushStrength = 3.0 * q.letters.length;
     const dv = q.dirVec;
     const pushDir = new THREE.Vector3(dv.x, dv.y || 0, dv.z)
       .applyQuaternion(structureGroup.quaternion);

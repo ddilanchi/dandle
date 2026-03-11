@@ -7,7 +7,7 @@ import { Physics } from './physics.js';
 
 await RAPIER.init();
 
-const VERSION = 'v4.0.0';
+const VERSION = 'v4.0.2';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -159,7 +159,7 @@ const audio = new AudioManager();
 
 // ── Physics engine ──
 const physics = new Physics(RAPIER);
-console.log('[DANDLE] Physics engine v4.0.0 initialized, gravity:', 10, 'solver iters:', 8);
+console.log('[DANDLE] Physics engine', VERSION, 'initialized');
 
 // ── Tiled cube floor (visual only — physics handled by Physics module) ──
 let floorMesh = null;

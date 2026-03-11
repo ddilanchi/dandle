@@ -55,6 +55,10 @@
 
 ## Important Notes
 - Always commit and push after changes — testing happens via GitHub Pages in browser
-- Cache buster in index.html must be updated when game.js changes (`?v=X.X.X`)
+- **VERSION must be updated in ALL 3 places when bumping:**
+  1. `js/game.js` line ~10: `const VERSION = 'vX.X.X';`
+  2. `index.html` CSS cache buster: `css/style.css?v=X.X.X`
+  3. `index.html` JS cache buster: `js/game.js?v=X.X.X`
+  - If ANY of these are stale, the browser serves cached old code
 - Half-extent MUST be 0.5 (not 0.47) — see PHYSICS_ANIMATION.md for ground gap bug history
 - Structure body should NEVER be rebuilt during normal word placement — only on debris splits or level restart

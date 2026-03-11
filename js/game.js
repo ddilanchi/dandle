@@ -3,10 +3,11 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { getRandomWord, isValidWord, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
+import { Physics } from './physics.js';
 
 await RAPIER.init();
 
-const VERSION = 'v3.8.0';
+const VERSION = 'v4.0.0';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -156,17 +157,18 @@ applySettings(currentSettings);
 // ── Audio ──
 const audio = new AudioManager();
 
-// ── Tiled cube floor (visual + physics) ──
+// ── Physics engine ──
+const physics = new Physics(RAPIER);
+
+// ── Tiled cube floor (visual only — physics handled by Physics module) ──
 let floorMesh = null;
-let floorBody = null;
 const TILE_H = 1;
 
 // Build floor from an array of tile positions: [{ x, z }, ...]
 // If no tiles provided, builds a default 40x40 flat floor.
 function buildFloor(tiles) {
-  // Clean up old floor
+  // Clean up old floor visual
   if (floorMesh) { scene.remove(floorMesh); floorMesh = null; }
-  if (floorBody) { world.removeRigidBody(floorBody); floorBody = null; }
 
   // Default: flat 40x40 grid
   if (!tiles) {
@@ -200,17 +202,8 @@ function buildFloor(tiles) {
   if (floorMesh.instanceColor) floorMesh.instanceColor.needsUpdate = true;
   scene.add(floorMesh);
 
-  // Physics: single static body with one collider per tile
-  const floorBodyDesc = RAPIER.RigidBodyDesc.fixed().setTranslation(0, 0, 0);
-  floorBody = world.createRigidBody(floorBodyDesc);
-  for (const t of tiles) {
-    const ty = (t.y || 0);
-    const colliderDesc = RAPIER.ColliderDesc.cuboid(0.5, TILE_H / 2, 0.5)
-      .setTranslation(t.x + 0.5, ty - TILE_H / 2, t.z + 0.5)
-      .setFriction(1.0).setRestitution(0.0)
-      .setCollisionGroups(makeCollisionGroups(CG_GROUND, CG_STRUCTURE | CG_GROWING));
-    world.createCollider(colliderDesc, floorBody);
-  }
+  // Physics
+  physics.createFloor(tiles);
 }
 
 
@@ -230,29 +223,8 @@ scene.add(structureGroup);
 
 const cubes = [];       // { letter, gx, gy, gz, mesh, wordIdx }
 const words = [];       // { text, dir, positions }
-const GRAVITY = 12;
-
-// ── Rapier physics world ──
-const world = new RAPIER.World({ x: 0, y: -GRAVITY, z: 0 });
-world.timestep = 1 / 120;
-world.numSolverIterations = 8;
-let physicsAccumulator = 0;
-const PHYS_STEP = 1 / 120;
-
-// Collision filter groups
-const CG_GROUND = 1;    // ground, walls, debris
-const CG_STRUCTURE = 2; // the main compound structure body
-const CG_GROWING = 4;   // kinematic cubes sliding into position
-
-function makeCollisionGroups(membership, filter) {
-  return (membership << 16) | filter;
-}
 
 const TRANSLATE_SPEED = 1; // units per second — how fast new cubes slide in
-
-let structureBody = null;  // rapier rigid body for the whole structure
-let _bodyAnchor = { x: 0, y: 0, z: 0 }; // local-space anchor (avg of cube positions)
-const wallBodies = [];     // static rapier bodies for level walls
 
 let endZone = null;
 let endZoneBox = null;
@@ -261,7 +233,7 @@ let currentDir = 'x+'; // current build direction (controlled by Shift+IJKL)
 let currentLevel = 1;
 const levelObstacles = []; // meshes added per level (walls, platforms, zones)
 const letterZones = [];    // { x, z, size, type: '+'/'-', letter, mesh }
-const debrisPieces = [];   // { group, body, cubes } — detached grey fragments
+const debrisPieces = [];   // { group, physicsId, cubes } — detached grey fragments
 
 // ── Animation queue ──
 const animations = [];  // { mesh, startTime, duration }
@@ -271,12 +243,9 @@ const BLOCK_ANIM_DURATION = 0.35; // seconds per block slide-out
 let _placementQueue = null;
 
 // ── Growth system ──
-// Kinematic body spawns inside the parent and slides to target.
-// Parent's collider group is changed to CG_PARENT so the growing cube
-// ignores it (but it still collides with ground — keeps supporting the
-// structure). Growing cube pushes all other structure cubes + ground.
-const CG_PARENT = 8; // temporary group for the parent during growth
-let _growingCube = null; // { cube, body, parentCube, fromX/Y/Z, toX/Y/Z, progress, distance }
+// Kinematic body slides from parent position to target. Purely cosmetic
+// collision with ground only — no CG_PARENT hack needed.
+let _growingCube = null; // { cube, growId, fromX/Y/Z, toX/Y/Z, progress, distance }
 
 function updateCubeGrowth(dt) {
   if (!_growingCube) return;
@@ -294,28 +263,19 @@ function updateCubeGrowth(dt) {
 
   gc.cube.mesh.position.set(px, py, pz);
 
-  // Move kinematic body
+  // Move kinematic body in world space
   const worldPos = new THREE.Vector3(px, py, pz)
     .applyQuaternion(structureGroup.quaternion)
     .add(structureGroup.position);
-  gc.body.setNextKinematicTranslation({ x: worldPos.x, y: worldPos.y, z: worldPos.z });
-  gc.body.setNextKinematicRotation({
-    x: structureGroup.quaternion.x, y: structureGroup.quaternion.y,
-    z: structureGroup.quaternion.z, w: structureGroup.quaternion.w
-  });
+  const rot = structureGroup.quaternion;
+  physics.moveGrowingBody(gc.growId,
+    { x: worldPos.x, y: worldPos.y, z: worldPos.z },
+    { x: rot.x, y: rot.y, z: rot.z, w: rot.w }
+  );
 
   if (t >= 1) {
     gc.cube.mesh.position.set(gc.toX, gc.toY, gc.toZ);
-
-    // Remove kinematic body
-    world.removeRigidBody(gc.body);
-
-    // Restore parent's collider group back to normal
-    if (gc.parentCube && gc.parentCube.collider) {
-      gc.parentCube.collider.setCollisionGroups(
-        makeCollisionGroups(CG_STRUCTURE, CG_GROUND | CG_GROWING)
-      );
-    }
+    physics.removeGrowingBody(gc.growId);
 
     _growingCube = null;
     // Advance to next letter in queue
@@ -326,58 +286,13 @@ function updateCubeGrowth(dt) {
   }
 }
 
-// ── Rapier body management ──
-
-function createStructureBody() {
-  if (structureBody) { world.removeRigidBody(structureBody); structureBody = null; }
-
-  if (cubes.length === 0) return;
-
-  // Compute anchor from all cubes (used for collider offsets)
-  let cx = 0, cy = 0, cz = 0;
-  for (const c of cubes) {
-    cx += c.gx;
-    cy += 0.5 + (c.gy || 0);
-    cz += c.gz;
-  }
-  cx /= cubes.length; cy /= cubes.length; cz /= cubes.length;
-  _bodyAnchor = { x: cx, y: cy, z: cz };
-
-  // World position of anchor
-  const anchorWorld = new THREE.Vector3(cx, cy, cz)
-    .applyQuaternion(structureGroup.quaternion)
-    .add(structureGroup.position);
-
-  const bodyDesc = RAPIER.RigidBodyDesc.dynamic()
-    .setTranslation(anchorWorld.x, anchorWorld.y, anchorWorld.z)
-    .setRotation({
-      x: structureGroup.quaternion.x, y: structureGroup.quaternion.y,
-      z: structureGroup.quaternion.z, w: structureGroup.quaternion.w
-    })
-    .setCanSleep(false)
-    .setLinearDamping(0.3)
-    .setAngularDamping(0.3);
-  structureBody = world.createRigidBody(bodyDesc);
-
-  for (const c of cubes) {
-    const desc = RAPIER.ColliderDesc.cuboid(0.5, 0.5, 0.5)
-      .setTranslation(c.gx - cx, (0.5 + (c.gy || 0)) - cy, c.gz - cz)
-      .setFriction(0.3).setRestitution(0.02)
-      .setDensity(1.0)
-      .setCollisionGroups(makeCollisionGroups(CG_STRUCTURE, CG_GROUND | CG_GROWING));
-    c.collider = world.createCollider(desc, structureBody);
-  }
-}
-
+// ── Sync Three.js group from physics body ──
 function syncGroupFromBody() {
-  if (!structureBody) return;
-  const pos = structureBody.translation();
-  const rot = structureBody.rotation();
-  const q = new THREE.Quaternion(rot.x, rot.y, rot.z, rot.w);
-  // Body is positioned at the anchor (average of cube positions).
-  // Group origin is at (0,0,0) in local space, so offset by the anchor.
-  const anchorOffset = new THREE.Vector3(_bodyAnchor.x, _bodyAnchor.y, _bodyAnchor.z).applyQuaternion(q);
-  structureGroup.position.set(pos.x - anchorOffset.x, pos.y - anchorOffset.y, pos.z - anchorOffset.z);
+  const t = physics.getStructureTransform();
+  if (!t) return;
+  const q = new THREE.Quaternion(t.rotation.x, t.rotation.y, t.rotation.z, t.rotation.w);
+  const anchorOffset = new THREE.Vector3(t.anchor.x, t.anchor.y, t.anchor.z).applyQuaternion(q);
+  structureGroup.position.set(t.position.x - anchorOffset.x, t.position.y - anchorOffset.y, t.position.z - anchorOffset.z);
   structureGroup.quaternion.copy(q);
 }
 
@@ -558,47 +473,31 @@ function _placeNextLetter() {
 
   if (q.index >= q.letters.length) {
     // Word complete — add colliders incrementally (no body rebuild!)
-    if (structureBody) {
-      const bodyPos = structureBody.translation();
-      const bodyRot = structureBody.rotation();
-      const bodyQuat = new THREE.Quaternion(bodyRot.x, bodyRot.y, bodyRot.z, bodyRot.w);
-      const invBodyQuat = bodyQuat.clone().invert();
+    const gp = structureGroup.position;
+    const gr = structureGroup.quaternion;
+    const groupPos = { x: gp.x, y: gp.y, z: gp.z };
+    const groupRot = { x: gr.x, y: gr.y, z: gr.z, w: gr.w };
 
-      for (const c of q.letters) {
-        const cube = cubes.find(cb => cb.gx === c.gx && (cb.gy || 0) === c.gy && cb.gz === c.gz);
-        if (!cube || cube.collider) continue;
-
-        // Convert cube world position to body-local offset
-        const cubeWorld = new THREE.Vector3(c.gx, 0.5 + c.gy, c.gz)
-          .applyQuaternion(structureGroup.quaternion)
-          .add(structureGroup.position);
-        const localOffset = cubeWorld.sub(new THREE.Vector3(bodyPos.x, bodyPos.y, bodyPos.z));
-        localOffset.applyQuaternion(invBodyQuat);
-
-        const desc = RAPIER.ColliderDesc.cuboid(0.5, 0.5, 0.5)
-          .setTranslation(localOffset.x, localOffset.y, localOffset.z)
-          .setFriction(0.3).setRestitution(0.02)
-          .setDensity(1.0)
-          .setCollisionGroups(makeCollisionGroups(CG_STRUCTURE, CG_GROUND | CG_GROWING));
-        cube.collider = world.createCollider(desc, structureBody);
-      }
-
-      // Apply push impulse in build direction (no velocity save/restore needed)
-      const pushStrength = 2.0 * q.letters.length;
-      const dv = q.dirVec;
-      const pushDir = new THREE.Vector3(dv.x, dv.y || 0, dv.z)
-        .applyQuaternion(structureGroup.quaternion);
-      structureBody.applyImpulse({
-        x: pushDir.x * pushStrength,
-        y: pushDir.y * pushStrength,
-        z: pushDir.z * pushStrength
-      }, true);
+    for (const c of q.letters) {
+      const cube = cubes.find(cb => cb.gx === c.gx && (cb.gy || 0) === c.gy && cb.gz === c.gz);
+      if (!cube || cube.colliderKey) continue;
+      cube.colliderKey = physics.addCubeCollider(cube, groupPos, groupRot);
     }
+
+    // Apply push impulse in build direction
+    const pushStrength = 2.0 * q.letters.length;
+    const dv = q.dirVec;
+    const pushDir = new THREE.Vector3(dv.x, dv.y || 0, dv.z)
+      .applyQuaternion(structureGroup.quaternion);
+    physics.applyImpulse({
+      x: pushDir.x * pushStrength,
+      y: pushDir.y * pushStrength,
+      z: pushDir.z * pushStrength
+    });
 
     _placementQueue = null;
     clearGhosts();
     // Select the last letter of the word
-    const dv = q.dirVec;
     const lastIdx = q.text.length - 1;
     const lastGx = q.startGx + dv.x * lastIdx;
     const lastGy = q.startGy + (dv.y || 0) * lastIdx;
@@ -640,42 +539,21 @@ function _placeNextLetter() {
 
   audio.pop(q.index);
 
-  // Find parent cube and hide it from growing cube's collision
-  const parentGx = Math.round(fromX);
-  const parentGy = Math.round(fromY - 0.5);
-  const parentGz = Math.round(fromZ);
-  const parentCube = cubes.find(c =>
-    c !== cube && c.gx === parentGx && (c.gy || 0) === parentGy && c.gz === parentGz
-  );
-  if (parentCube && parentCube.collider) {
-    // Switch to CG_PARENT — still collides with ground, invisible to CG_GROWING
-    parentCube.collider.setCollisionGroups(
-      makeCollisionGroups(CG_PARENT, CG_GROUND)
-    );
-  }
-
-  // Create kinematic body at parent position immediately
+  // Create kinematic body at parent position for slide animation
   const worldFrom = new THREE.Vector3(fromX, fromY, fromZ)
     .applyQuaternion(structureGroup.quaternion)
     .add(structureGroup.position);
-  const growBodyDesc = RAPIER.RigidBodyDesc.kinematicPositionBased()
-    .setTranslation(worldFrom.x, worldFrom.y, worldFrom.z)
-    .setRotation({
-      x: structureGroup.quaternion.x, y: structureGroup.quaternion.y,
-      z: structureGroup.quaternion.z, w: structureGroup.quaternion.w
-    });
-  const growBody = world.createRigidBody(growBodyDesc);
-  const colliderDesc = RAPIER.ColliderDesc.cuboid(0.5, 0.5, 0.5)
-    .setFriction(0.5).setRestitution(0.0)
-    .setCollisionGroups(makeCollisionGroups(CG_GROWING, CG_STRUCTURE | CG_GROUND));
-  world.createCollider(colliderDesc, growBody);
+  const rot = structureGroup.quaternion;
+  const growId = physics.createGrowingBody(
+    { x: worldFrom.x, y: worldFrom.y, z: worldFrom.z },
+    { x: rot.x, y: rot.y, z: rot.z, w: rot.w }
+  );
 
   const dx = toX - fromX, dy = toY - fromY, dz = toZ - fromZ;
   const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
   _growingCube = {
     cube,
-    body: growBody,
-    parentCube,
+    growId,
     fromX, fromY, fromZ,
     toX, toY, toZ,
     progress: 0,
@@ -845,14 +723,7 @@ function addWall(x, z, w, h, d) {
   levelObstacles.push(wall);
   wall.userData.isWall = true;
 
-  const wallBodyDesc = RAPIER.RigidBodyDesc.fixed().setTranslation(x, h / 2, z);
-  const wallBody = world.createRigidBody(wallBodyDesc);
-  const wallColliderDesc = RAPIER.ColliderDesc.cuboid(w / 2, h / 2, d / 2)
-    .setFriction(1.0).setRestitution(0.0)
-    .setCollisionGroups(makeCollisionGroups(CG_GROUND, CG_STRUCTURE | CG_GROWING));
-  world.createCollider(wallColliderDesc, wallBody);
-  wallBodies.push(wallBody);
-
+  physics.addWall(x, z, w, h, d);
   return wall;
 }
 
@@ -884,15 +755,11 @@ function addZipLine(x1, y1, z1, x2, y2, z2, radius = 0.3) {
   for (let i = 0; i < segments; i++) {
     const t = (i + 0.5) / segments;
     const pos = start.clone().lerp(end, t);
-    const segBodyDesc = RAPIER.RigidBodyDesc.fixed()
-      .setTranslation(pos.x, pos.y, pos.z)
-      .setRotation({ x: quat.x, y: quat.y, z: quat.z, w: quat.w });
-    const segBody = world.createRigidBody(segBodyDesc);
-    const segColliderDesc = RAPIER.ColliderDesc.cuboid(radius, segLen / 2, radius)
-      .setFriction(1.0).setRestitution(0.0)
-      .setCollisionGroups(makeCollisionGroups(CG_GROUND, CG_STRUCTURE | CG_GROWING));
-    world.createCollider(segColliderDesc, segBody);
-    wallBodies.push(segBody);
+    physics.addZipSegment(
+      { x: pos.x, y: pos.y, z: pos.z },
+      { x: quat.x, y: quat.y, z: quat.z, w: quat.w },
+      radius, segLen / 2, radius
+    );
   }
 
   return pole;
@@ -1005,11 +872,10 @@ function _findComponents(cubeList) {
 }
 
 function _spawnDebris(debrisCubes) {
-  // Create a new group and body for this chunk
+  // Create a new Three.js group for this chunk
   const group = new THREE.Group();
   scene.add(group);
 
-  // Compute world positions from structureGroup
   const q = structureGroup.quaternion;
   const gp = structureGroup.position;
 
@@ -1024,7 +890,10 @@ function _spawnDebris(debrisCubes) {
   const worldPos = comLocal.add(gp);
 
   for (const c of debrisCubes) {
-    // Remove from main structure
+    // Remove collider from structure body
+    physics.removeCubeCollider(c);
+
+    // Remove from main structure visuals
     structureGroup.remove(c.mesh);
     const idx = cubes.indexOf(c);
     if (idx !== -1) cubes.splice(idx, 1);
@@ -1040,29 +909,18 @@ function _spawnDebris(debrisCubes) {
   group.position.copy(worldPos);
   group.quaternion.copy(q);
 
-  // Physics body
-  const bodyDesc = RAPIER.RigidBodyDesc.dynamic()
-    .setTranslation(worldPos.x, worldPos.y, worldPos.z)
-    .setRotation({ x: q.x, y: q.y, z: q.z, w: q.w })
-    .setCanSleep(false)
-    .setLinearDamping(0.3).setAngularDamping(0.3);
-  const body = world.createRigidBody(bodyDesc);
+  // Physics — delegate to physics engine
+  const linvel = physics.getLinvel();
+  const angvel = physics.getAngvel();
+  const { id } = physics.spawnDebris(
+    debrisCubes,
+    { x: worldPos.x, y: worldPos.y, z: worldPos.z },
+    { x: q.x, y: q.y, z: q.z, w: q.w },
+    linvel,
+    angvel
+  );
 
-  // Copy velocity from main structure
-  if (structureBody) {
-    const sv = structureBody.linvel();
-    body.setLinvel(sv, true);
-    body.setAngvel(structureBody.angvel(), true);
-  }
-
-  for (const c of debrisCubes) {
-    const desc = RAPIER.ColliderDesc.cuboid(0.5, 0.5, 0.5)
-      .setTranslation(c.gx - cx, 0.5 + (c.gy || 0) - cy, c.gz - cz)
-      .setFriction(0.3).setRestitution(0.02).setDensity(1.0);
-    world.createCollider(desc, body);
-  }
-
-  debrisPieces.push({ group, body, cubes: debrisCubes });
+  debrisPieces.push({ group, physicsId: id, cubes: debrisCubes });
 }
 
 function deleteWord(wordIdx) {
@@ -1111,7 +969,13 @@ function deleteWord(wordIdx) {
   if (cubes.length === 0) return;
   const components = _findComponents(cubes);
   if (components.length <= 1) {
-    createStructureBody();
+    // Rebuild structure body (topology changed, but still one piece)
+    const gp = structureGroup.position;
+    const gr = structureGroup.quaternion;
+    physics.createStructureBody(cubes,
+      { x: gp.x, y: gp.y, z: gp.z },
+      { x: gr.x, y: gr.y, z: gr.z, w: gr.w }
+    );
     return;
   }
 
@@ -1120,7 +984,12 @@ function deleteWord(wordIdx) {
   for (let i = 1; i < components.length; i++) {
     _spawnDebris(components[i]);
   }
-  createStructureBody();
+  const gp = structureGroup.position;
+  const gr = structureGroup.quaternion;
+  physics.createStructureBody(cubes,
+    { x: gp.x, y: gp.y, z: gp.z },
+    { x: gr.x, y: gr.y, z: gr.z, w: gr.w }
+  );
 }
 
 function updateLetterZones() {
@@ -1352,15 +1221,12 @@ function startLevel() {
   levelObstacles.length = 0;
   letterZones.length = 0;
 
-  // Remove old physics bodies
-  if (structureBody) { world.removeRigidBody(structureBody); structureBody = null; }
-  for (const b of wallBodies) world.removeRigidBody(b);
-  wallBodies.length = 0;
+  // Reset physics engine (clean slate)
+  physics.reset();
 
-  // Remove debris
+  // Remove debris visuals
   for (const d of debrisPieces) {
     scene.remove(d.group);
-    world.removeRigidBody(d.body);
   }
   debrisPieces.length = 0;
 
@@ -1402,7 +1268,7 @@ function startLevel() {
   const startY = currentLevel === 6 ? 10 : 0;
   placeWord(word, startX, 0, 'x+', 0, false, startY);
   lettersUsed = word.length;
-  createStructureBody();
+  physics.createStructureBody(cubes);
 
   // Camera target
   const camTargetY = startY;
@@ -1922,22 +1788,17 @@ function cubeWorldPos(c) {
 
 // ── Physics update ──
 function updatePhysics(dt) {
-  if (levelComplete || !structureBody) return;
+  if (levelComplete || !physics.hasStructureBody()) return;
 
-  // Accumulator pattern for fixed-step physics
-  physicsAccumulator += dt;
-  while (physicsAccumulator >= PHYS_STEP) {
-    world.step();
-    physicsAccumulator -= PHYS_STEP;
-  }
+  physics.step(dt);
   syncGroupFromBody();
 
   // Sync debris pieces
   for (const d of debrisPieces) {
-    const dp = d.body.translation();
-    const dr = d.body.rotation();
-    d.group.position.set(dp.x, dp.y, dp.z);
-    d.group.quaternion.set(dr.x, dr.y, dr.z, dr.w);
+    const dt = physics.getDebrisTransform(d.physicsId);
+    if (!dt) continue;
+    d.group.position.set(dt.position.x, dt.position.y, dt.position.z);
+    d.group.quaternion.set(dt.rotation.x, dt.rotation.y, dt.rotation.z, dt.rotation.w);
   }
 
   // ── Fell off edge ──
@@ -1949,7 +1810,7 @@ function updatePhysics(dt) {
   }
   if (!onPlatform) {
     levelFalling = true;
-    const sPos = structureBody.translation();
+    const sPos = physics.getStructurePosition();
     if (sPos.y < -5) {
       showMessage('Fell off! Restarting...', '#ff6b6b');
       levelComplete = true;
@@ -1961,10 +1822,10 @@ function updatePhysics(dt) {
 
   // Clean up debris that fell too far
   for (let i = debrisPieces.length - 1; i >= 0; i--) {
-    const debrisPos = debrisPieces[i].body.translation();
-    if (debrisPos.y < -20) {
+    const dt = physics.getDebrisTransform(debrisPieces[i].physicsId);
+    if (!dt || dt.position.y < -20) {
       scene.remove(debrisPieces[i].group);
-      world.removeRigidBody(debrisPieces[i].body);
+      physics.removeDebris(debrisPieces[i].physicsId);
       debrisPieces.splice(i, 1);
     }
   }

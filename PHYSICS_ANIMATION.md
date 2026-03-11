@@ -177,35 +177,44 @@ restructured. But for normal word placement, never rebuild.
 
 ---
 
-## Current System (v3.7.1) — Reference
+## Current System (v4.0.0) — Clean Physics Module
 
-### Placement flow (what exists now)
-1. Each new letter gets a **kinematic Rapier body** (separate from structure)
-2. Collision-filtered: `CG_GROWING=4` collides with `CG_GROUND` and `CG_STRUCTURE`
-3. Kinematic body slides from parent cube to target at `TRANSLATE_SPEED`
-4. When cube arrives, kinematic body is removed
-5. When entire word finishes, `createStructureBody()` **destroys and rebuilds everything**
-6. Old velocity is manually copied to new body
+Physics is now a separate module (`js/physics.js`) with a clean API.
+
+### Architecture
+- `Physics` class owns the Rapier world, all bodies, all colliders
+- game.js talks to it through methods, never touches Rapier directly
+- No Three.js dependency in physics module — pure `{x,y,z}` objects
+
+### Placement flow
+1. Structure body created ONCE at level start via `physics.createStructureBody()`
+2. Each new letter gets a kinematic body via `physics.createGrowingBody()` for slide animation
+3. Growing cube only collides with ground (cosmetic — no CG_PARENT hack)
+4. When word completes, colliders added incrementally via `physics.addCubeCollider()`
+5. Body is NEVER destroyed during normal gameplay — contact cache stays warm
+6. Rebuild only happens on debris splits (topology change) or level restart
 
 ### Collision filter groups
 ```
 CG_GROUND    = 1   // floor, walls, static geometry
-CG_STRUCTURE = 2   // the main compound structure body
-CG_GROWING   = 4   // kinematic cubes sliding into position
-CG_PARENT    = 8   // temporarily hides parent cube from growing cube
+CG_STRUCTURE = 2   // main compound structure body
+CG_GROWING   = 4   // kinematic cubes (ground-only collision)
+CG_DEBRIS    = 8   // detached chunks
 ```
 
-### Key constants
+No more CG_PARENT. Growing cubes simply don't filter against CG_STRUCTURE.
+
+### Key constants (in physics.js)
 ```
-GRAVITY = 20              // too high — should be ~10-12
-TRANSLATE_SPEED = 1       // units/sec for cube slide-in
-PHYS_STEP = 1/120         // good — keep this
-Half-extent = 0.5         // DO NOT change — prevents ground gap
-Cube center y = 0.5 + gy
-linearDamping = 0.1       // too low
-angularDamping = 0.1      // too low
-friction = 0.02           // way too low
-restitution = 0.05        // fine
+GRAVITY = 10
+PHYS_STEP = 1/120
+SOLVER_ITERATIONS = 8
+CUBE_HALF = 0.5
+STRUCT_FRICTION = 0.5
+STRUCT_RESTITUTION = 0.02
+STRUCT_LINEAR_DAMPING = 0.3
+STRUCT_ANGULAR_DAMPING = 0.3
+STATIC_FRICTION = 0.8
 ```
 
 ---

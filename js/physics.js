@@ -2,6 +2,10 @@
 // Clean Rapier3D wrapper. No Three.js dependency.
 // All positions are {x,y,z}, rotations are {x,y,z,w} quaternions.
 
+const DEBUG = true;
+function dbg(...args) { if (DEBUG) console.log('[PHYS]', ...args); }
+function dbgWarn(...args) { if (DEBUG) console.warn('[PHYS]', ...args); }
+
 // ── Constants ──
 const GRAVITY = 10;
 const PHYS_STEP = 1 / 120;
@@ -51,8 +55,11 @@ export class Physics {
     this.world = new RAPIER.World({ x: 0, y: -GRAVITY, z: 0 });
     this.world.timestep = PHYS_STEP;
     this.world.numSolverIterations = SOLVER_ITERATIONS;
+    dbg('constructor: world created, gravity=', -GRAVITY, 'timestep=', PHYS_STEP, 'solverIters=', SOLVER_ITERATIONS);
 
     this._accumulator = 0;
+    this._stepCount = 0;
+    this._logInterval = 120; // log every 120 steps (1 second)
 
     // Structure
     this._structureBody = null;
@@ -79,15 +86,27 @@ export class Physics {
   step(dt) {
     this._accumulator += dt;
     let stepped = false;
+    let steps = 0;
     while (this._accumulator >= PHYS_STEP) {
       this.world.step();
       this._accumulator -= PHYS_STEP;
       stepped = true;
+      steps++;
+      this._stepCount++;
+    }
+    // Log structure body state every second
+    if (stepped && this._structureBody && (this._stepCount % this._logInterval === 0)) {
+      const p = this._structureBody.translation();
+      const v = this._structureBody.linvel();
+      const av = this._structureBody.angvel();
+      const nc = this._cubeColliders.size;
+      dbg(`tick #${this._stepCount} | pos=(${p.x.toFixed(2)}, ${p.y.toFixed(2)}, ${p.z.toFixed(2)}) | vel=(${v.x.toFixed(2)}, ${v.y.toFixed(2)}, ${v.z.toFixed(2)}) | angvel=(${av.x.toFixed(2)}, ${av.y.toFixed(2)}, ${av.z.toFixed(2)}) | colliders=${nc} | steps_this_frame=${steps}`);
     }
     return stepped;
   }
 
   reset() {
+    dbg('reset: tearing down world');
     // Tear down everything and recreate the world
     this.world.free();
     this.world = new this.RAPIER.World({ x: 0, y: -GRAVITY, z: 0 });
@@ -112,7 +131,8 @@ export class Physics {
       this.world.removeRigidBody(this._floorBody);
       this._floorBody = null;
     }
-    if (!tiles || tiles.length === 0) return;
+    if (!tiles || tiles.length === 0) { dbgWarn('createFloor: no tiles!'); return; }
+    dbg('createFloor:', tiles.length, 'tiles');
 
     const desc = this.RAPIER.RigidBodyDesc.fixed().setTranslation(0, 0, 0);
     this._floorBody = this.world.createRigidBody(desc);
@@ -179,14 +199,16 @@ export class Physics {
    * @returns {{ position, rotation, anchor }} or null
    */
   createStructureBody(cubes, groupPos = {x:0,y:0,z:0}, groupRot = {x:0,y:0,z:0,w:1}) {
+    dbg('createStructureBody:', cubes?.length, 'cubes, groupPos=', groupPos, 'groupRot=', groupRot);
     // Clean up old body
     if (this._structureBody) {
+      dbg('  removing old structure body');
       this.world.removeRigidBody(this._structureBody);
       this._structureBody = null;
     }
     this._cubeColliders.clear();
 
-    if (!cubes || cubes.length === 0) return null;
+    if (!cubes || cubes.length === 0) { dbgWarn('  no cubes!'); return null; }
 
     // Compute anchor (centroid of cube centers in local space)
     let ax = 0, ay = 0, az = 0;
@@ -213,6 +235,7 @@ export class Physics {
       .setLinearDamping(STRUCT_LINEAR_DAMPING)
       .setAngularDamping(STRUCT_ANGULAR_DAMPING);
     this._structureBody = this.world.createRigidBody(bodyDesc);
+    dbg('  body created at', `(${wp.x.toFixed(2)}, ${wp.y.toFixed(2)}, ${wp.z.toFixed(2)})`, 'anchor=', `(${ax.toFixed(2)}, ${ay.toFixed(2)}, ${az.toFixed(2)})`);
 
     // Add colliders for each cube
     for (const c of cubes) {
@@ -228,6 +251,7 @@ export class Physics {
       const collider = this.world.createCollider(cd, this._structureBody);
       this._cubeColliders.set(cubeKey(c), collider);
     }
+    dbg('  added', this._cubeColliders.size, 'colliders. First cube bottom y =', (cubes[0].gy || 0), '-> shape bottom =', ((0.5 + (cubes[0].gy || 0)) - ay - CUBE_HALF).toFixed(4));
 
     return this.getStructureTransform();
   }
@@ -241,7 +265,8 @@ export class Physics {
    * @returns collider handle key
    */
   addCubeCollider(cube, groupPos, groupRot) {
-    if (!this._structureBody) return null;
+    if (!this._structureBody) { dbgWarn('addCubeCollider: no structure body!'); return null; }
+    dbg('addCubeCollider:', cubeKey(cube), 'groupPos=', groupPos);
 
     const bodyPos = this._structureBody.translation();
     const bodyRot = this._structureBody.rotation();
@@ -261,6 +286,7 @@ export class Physics {
     };
     const invBodyRot = invertQuat(bodyRot);
     const localOffset = applyQuatToVec(invBodyRot, offset);
+    dbg('  bodyPos=', `(${bodyPos.x.toFixed(2)},${bodyPos.y.toFixed(2)},${bodyPos.z.toFixed(2)})`, 'cubeWorld=', `(${cubeWorld.x.toFixed(2)},${cubeWorld.y.toFixed(2)},${cubeWorld.z.toFixed(2)})`, 'localOffset=', `(${localOffset.x.toFixed(2)},${localOffset.y.toFixed(2)},${localOffset.z.toFixed(2)})`);
 
     const cd = this.RAPIER.ColliderDesc.cuboid(CUBE_HALF, CUBE_HALF, CUBE_HALF)
       .setTranslation(localOffset.x, localOffset.y, localOffset.z)
@@ -306,8 +332,11 @@ export class Physics {
   }
 
   applyImpulse(impulse) {
-    if (!this._structureBody) return;
+    if (!this._structureBody) { dbgWarn('applyImpulse: no body!'); return; }
+    dbg('applyImpulse:', `(${impulse.x.toFixed(2)}, ${impulse.y.toFixed(2)}, ${impulse.z.toFixed(2)})`, 'mass=', this._structureBody.mass().toFixed(2));
     this._structureBody.applyImpulse(impulse, true);
+    const v = this._structureBody.linvel();
+    dbg('  velocity after impulse:', `(${v.x.toFixed(2)}, ${v.y.toFixed(2)}, ${v.z.toFixed(2)})`);
   }
 
   getLinvel() {
@@ -341,6 +370,7 @@ export class Physics {
   // ═══════════════════════════════════════════════════
 
   createGrowingBody(worldPos, worldRot) {
+    dbg('createGrowingBody at', `(${worldPos.x.toFixed(2)}, ${worldPos.y.toFixed(2)}, ${worldPos.z.toFixed(2)})`);
     const desc = this.RAPIER.RigidBodyDesc.kinematicPositionBased()
       .setTranslation(worldPos.x, worldPos.y, worldPos.z)
       .setRotation(worldRot);
@@ -365,7 +395,8 @@ export class Physics {
 
   removeGrowingBody(id) {
     const body = this._growingBodies.get(id);
-    if (!body) return;
+    if (!body) { dbgWarn('removeGrowingBody: id not found:', id); return; }
+    dbg('removeGrowingBody:', id);
     this.world.removeRigidBody(body);
     this._growingBodies.delete(id);
   }

@@ -474,16 +474,21 @@ function _placeNextLetter() {
 
   if (q.index >= q.letters.length) {
     // Word complete — add colliders incrementally (no body rebuild!)
+    console.log('[GAME] Word complete:', q.text, '| new letters:', q.letters.length, '| total cubes:', cubes.length);
     const gp = structureGroup.position;
     const gr = structureGroup.quaternion;
     const groupPos = { x: gp.x, y: gp.y, z: gp.z };
     const groupRot = { x: gr.x, y: gr.y, z: gr.z, w: gr.w };
+    console.log('[GAME] structureGroup pos=', groupPos, 'rot=', groupRot);
 
+    let added = 0, skipped = 0;
     for (const c of q.letters) {
       const cube = cubes.find(cb => cb.gx === c.gx && (cb.gy || 0) === c.gy && cb.gz === c.gz);
-      if (!cube || cube.colliderKey) continue;
+      if (!cube || cube.colliderKey) { skipped++; continue; }
       cube.colliderKey = physics.addCubeCollider(cube, groupPos, groupRot);
+      added++;
     }
+    console.log('[GAME] Added', added, 'colliders, skipped', skipped);
 
     // Apply push impulse in build direction
     const pushStrength = 3.0 * q.letters.length;
@@ -539,6 +544,8 @@ function _placeNextLetter() {
   if (q.index === 0) clearGhosts();
 
   audio.pop(q.index);
+
+  console.log('[GAME] Growing letter', l.letter, 'from', `(${fromX},${fromY},${fromZ})`, 'to', `(${toX},${toY},${toZ})`);
 
   // Create kinematic body at parent position for slide animation
   const worldFrom = new THREE.Vector3(fromX, fromY, fromZ)
@@ -1269,7 +1276,9 @@ function startLevel() {
   const startY = currentLevel === 6 ? 10 : 0;
   placeWord(word, startX, 0, 'x+', 0, false, startY);
   lettersUsed = word.length;
-  physics.createStructureBody(cubes);
+  console.log('[GAME] startLevel: placing word', word, '| cubes:', cubes.length, '| startX:', startX, '| startY:', startY);
+  const initTransform = physics.createStructureBody(cubes);
+  console.log('[GAME] startLevel: structure body created, transform=', initTransform);
 
   // Camera target
   const camTargetY = startY;
@@ -1788,11 +1797,19 @@ function cubeWorldPos(c) {
 
 
 // ── Physics update ──
+let _physFrameCount = 0;
 function updatePhysics(dt) {
   if (levelComplete || !physics.hasStructureBody()) return;
 
   physics.step(dt);
   syncGroupFromBody();
+  _physFrameCount++;
+
+  // Log structure group position every 2 seconds
+  if (_physFrameCount % 120 === 1) {
+    const sp = structureGroup.position;
+    console.log('[GAME] frame', _physFrameCount, '| structureGroup pos=', `(${sp.x.toFixed(2)}, ${sp.y.toFixed(2)}, ${sp.z.toFixed(2)})`, '| cubes=', cubes.length, '| growing=', !!_growingCube, '| queue=', !!_placementQueue);
+  }
 
   // Sync debris pieces
   for (const d of debrisPieces) {

@@ -6,7 +6,7 @@ import { AudioManager } from './audio.js';
 
 await RAPIER.init();
 
-const VERSION = 'v3.7.1';
+const VERSION = 'v3.8.0';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -230,11 +230,12 @@ scene.add(structureGroup);
 
 const cubes = [];       // { letter, gx, gy, gz, mesh, wordIdx }
 const words = [];       // { text, dir, positions }
-const GRAVITY = 20;
+const GRAVITY = 12;
 
 // ── Rapier physics world ──
 const world = new RAPIER.World({ x: 0, y: -GRAVITY, z: 0 });
 world.timestep = 1 / 120;
+world.numSolverIterations = 8;
 let physicsAccumulator = 0;
 const PHYS_STEP = 1 / 120;
 
@@ -354,16 +355,15 @@ function createStructureBody() {
       z: structureGroup.quaternion.z, w: structureGroup.quaternion.w
     })
     .setCanSleep(false)
-    .setLinearDamping(0.1)
-    .setAngularDamping(0.1);
+    .setLinearDamping(0.3)
+    .setAngularDamping(0.3);
   structureBody = world.createRigidBody(bodyDesc);
 
   for (const c of cubes) {
     const desc = RAPIER.ColliderDesc.cuboid(0.5, 0.5, 0.5)
       .setTranslation(c.gx - cx, (0.5 + (c.gy || 0)) - cy, c.gz - cz)
-      .setFriction(0.02).setRestitution(0.05)
+      .setFriction(0.3).setRestitution(0.02)
       .setDensity(1.0)
-      .setFrictionCombineRule(RAPIER.CoefficientCombineRule.Min)
       .setCollisionGroups(makeCollisionGroups(CG_STRUCTURE, CG_GROUND | CG_GROWING));
     c.collider = world.createCollider(desc, structureBody);
   }
@@ -557,14 +557,33 @@ function _placeNextLetter() {
   const q = _placementQueue;
 
   if (q.index >= q.letters.length) {
-    // Word complete — rebuild body with all new colliders at once
-    const oldVel = structureBody ? structureBody.linvel() : { x: 0, y: 0, z: 0 };
-    const oldAngvel = structureBody ? structureBody.angvel() : { x: 0, y: 0, z: 0 };
-    createStructureBody();
-    // Preserve momentum + add push impulse in build direction
+    // Word complete — add colliders incrementally (no body rebuild!)
     if (structureBody) {
-      structureBody.setLinvel(oldVel, true);
-      structureBody.setAngvel(oldAngvel, true);
+      const bodyPos = structureBody.translation();
+      const bodyRot = structureBody.rotation();
+      const bodyQuat = new THREE.Quaternion(bodyRot.x, bodyRot.y, bodyRot.z, bodyRot.w);
+      const invBodyQuat = bodyQuat.clone().invert();
+
+      for (const c of q.letters) {
+        const cube = cubes.find(cb => cb.gx === c.gx && (cb.gy || 0) === c.gy && cb.gz === c.gz);
+        if (!cube || cube.collider) continue;
+
+        // Convert cube world position to body-local offset
+        const cubeWorld = new THREE.Vector3(c.gx, 0.5 + c.gy, c.gz)
+          .applyQuaternion(structureGroup.quaternion)
+          .add(structureGroup.position);
+        const localOffset = cubeWorld.sub(new THREE.Vector3(bodyPos.x, bodyPos.y, bodyPos.z));
+        localOffset.applyQuaternion(invBodyQuat);
+
+        const desc = RAPIER.ColliderDesc.cuboid(0.5, 0.5, 0.5)
+          .setTranslation(localOffset.x, localOffset.y, localOffset.z)
+          .setFriction(0.3).setRestitution(0.02)
+          .setDensity(1.0)
+          .setCollisionGroups(makeCollisionGroups(CG_STRUCTURE, CG_GROUND | CG_GROWING));
+        cube.collider = world.createCollider(desc, structureBody);
+      }
+
+      // Apply push impulse in build direction (no velocity save/restore needed)
       const pushStrength = 2.0 * q.letters.length;
       const dv = q.dirVec;
       const pushDir = new THREE.Vector3(dv.x, dv.y || 0, dv.z)
@@ -1026,7 +1045,7 @@ function _spawnDebris(debrisCubes) {
     .setTranslation(worldPos.x, worldPos.y, worldPos.z)
     .setRotation({ x: q.x, y: q.y, z: q.z, w: q.w })
     .setCanSleep(false)
-    .setLinearDamping(0.05).setAngularDamping(0.05);
+    .setLinearDamping(0.3).setAngularDamping(0.3);
   const body = world.createRigidBody(bodyDesc);
 
   // Copy velocity from main structure
@@ -1039,8 +1058,7 @@ function _spawnDebris(debrisCubes) {
   for (const c of debrisCubes) {
     const desc = RAPIER.ColliderDesc.cuboid(0.5, 0.5, 0.5)
       .setTranslation(c.gx - cx, 0.5 + (c.gy || 0) - cy, c.gz - cz)
-      .setFriction(0.02).setRestitution(0.05).setDensity(1.0)
-      .setFrictionCombineRule(RAPIER.CoefficientCombineRule.Min);
+      .setFriction(0.3).setRestitution(0.02).setDensity(1.0);
     world.createCollider(desc, body);
   }
 

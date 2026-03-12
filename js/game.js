@@ -187,10 +187,10 @@ let _ghostMeshes = [];
 const explosionPieces = [];
 
 // ── Letter mesh creation (canvas texture on box) ──
-function makeLetterMaterial(letter, bgColor, borderColor, textColor) {
-  const mat = new BABYLON.StandardMaterial('letterMat_' + letter + '_' + Math.random(), scene);
-  const dt = new BABYLON.DynamicTexture('dt_' + Math.random(), 128, scene, false);
-  const ctx = dt.getContext();
+function _makeCanvasTex(letter, bgColor, borderColor, textColor) {
+  const c = document.createElement('canvas');
+  c.width = 128; c.height = 128;
+  const ctx = c.getContext('2d');
   ctx.fillStyle = bgColor || '#f5ecd7';
   ctx.fillRect(0, 0, 128, 128);
   ctx.strokeStyle = borderColor || '#999';
@@ -201,8 +201,14 @@ function makeLetterMaterial(letter, bgColor, borderColor, textColor) {
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(letter, 64, 68);
-  dt.update(false);
-  mat.diffuseTexture = dt;
+  return c.toDataURL();
+}
+
+function makeLetterMaterial(letter, bgColor, borderColor, textColor) {
+  const mat = new BABYLON.StandardMaterial('letterMat_' + letter + '_' + Math.random(), scene);
+  const dataUrl = _makeCanvasTex(letter, bgColor, borderColor, textColor);
+  const tex = new BABYLON.Texture(dataUrl, scene, false, true);
+  mat.diffuseTexture = tex;
   return mat;
 }
 
@@ -423,17 +429,21 @@ function updateFlyingLetter(dt) {
   const dz = target.z - pos.z;
   const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
 
-  if (dist < 0.15) {
-    // Arrived — snap and convert to structure cube
-    fl.cube.mesh.position.set(target.x, target.y, target.z);
+  // Check time limit — if letter has been flying too long, force-snap it
+  if (!fl.startTime) fl.startTime = performance.now() / 1000;
+  const flyAge = (performance.now() / 1000) - fl.startTime;
+  const arrived = dist < 0.3 || flyAge > 2.0;
 
-    // Remove the flying aggregate
+  if (arrived) {
+    // Snap mesh to target
     if (fl.aggregate) {
       fl.aggregate.dispose();
       fl.cube.aggregate = null;
     }
 
-    // Create proper structure aggregate
+    fl.cube.mesh.position.set(target.x, target.y, target.z);
+
+    // Create proper structure aggregate at exact position
     fl.cube.aggregate = new BABYLON.PhysicsAggregate(fl.cube.mesh, BABYLON.PhysicsShapeType.BOX, {
       mass: 1,
       friction: STRUCT_FRICTION,
@@ -443,7 +453,6 @@ function updateFlyingLetter(dt) {
     fl.cube.aggregate.body.setAngularDamping(0.15);
     setCollisionFiltering(fl.cube.aggregate, CG_STRUCTURE, CG_GROUND | CG_STRUCTURE | CG_FLYING | CG_DEBRIS);
 
-    // Connect to neighbors
     connectCubeToNeighbors(fl.cube);
 
     _flyingLetter = null;
@@ -451,16 +460,17 @@ function updateFlyingLetter(dt) {
 
     if (_placementQueue) {
       _placementQueue.index++;
-      _placeNextLetter();
+      // Small delay between letters so they don't all spawn on top of each other
+      setTimeout(() => _placeNextLetter(), 150);
     }
     return;
   }
 
-  // Apply sustained force toward target
+  // Apply sustained force toward target — strong enough to push through structure
   if (fl.aggregate && fl.aggregate.body) {
-    const forceMag = 40;
+    const forceMag = 80;
     const fx = (dx / dist) * forceMag;
-    const fy = (dy / dist) * forceMag;
+    const fy = (dy / dist) * forceMag + 10; // counteract gravity
     const fz = (dz / dist) * forceMag;
     fl.aggregate.body.applyForce(
       new BABYLON.Vector3(fx, fy, fz),
@@ -831,40 +841,62 @@ function clearHighlight() {
 }
 
 // ── Direction arrow ──
+let _arrowParts = []; // meshes for the direction arrow
+
 function updateDirectionArrow() {
   if (!selectedCube) { removeDirectionArrow(); return; }
   const dv = dirToVec(currentDir);
-  const arrowDir = new BABYLON.Vector3(dv.x, dv.y || 0, dv.z);
+  const arrowDir = new BABYLON.Vector3(dv.x, dv.y || 0, dv.z).normalize();
   const origin = cubeWorldPos(selectedCube);
 
   removeDirectionArrow();
 
-  // Create arrow using lines
-  const end = origin.add(arrowDir.scale(2));
-  const lines = BABYLON.MeshBuilder.CreateLines('dirArrow', {
-    points: [origin, end],
-  }, scene);
-  lines.color = new BABYLON.Color3(0.27, 0.53, 1);
-  lines.isPickable = false;
-  directionArrow = lines;
+  const arrowMat = new BABYLON.StandardMaterial('arrowMat', scene);
+  arrowMat.diffuseColor = new BABYLON.Color3(0.27, 0.53, 1);
+  arrowMat.emissiveColor = new BABYLON.Color3(0.2, 0.4, 0.9);
+  arrowMat.disableLighting = true;
 
-  // Arrowhead
-  const headSize = 0.2;
-  const headBase = end.subtract(arrowDir.scale(headSize * 2));
-  // Simple cone-like arrowhead using lines
-  const perp1 = new BABYLON.Vector3(-arrowDir.z, 0, arrowDir.x).normalize().scale(headSize);
-  const perp2 = new BABYLON.Vector3(0, 1, 0).scale(headSize);
-  const headLines = BABYLON.MeshBuilder.CreateLineSystem('arrowHead', {
-    lines: [
-      [headBase.add(perp1), end],
-      [headBase.subtract(perp1), end],
-      [headBase.add(perp2), end],
-      [headBase.subtract(perp2), end],
-    ],
+  // Shaft: cylinder from origin to near the tip
+  const shaftLen = 1.5;
+  const shaft = BABYLON.MeshBuilder.CreateCylinder('arrowShaft', {
+    diameter: 0.08,
+    height: shaftLen,
+    tessellation: 8,
   }, scene);
-  headLines.color = new BABYLON.Color3(0.27, 0.53, 1);
-  headLines.isPickable = false;
-  directionArrow._head = headLines;
+  shaft.material = arrowMat;
+  shaft.isPickable = false;
+
+  // Position shaft center
+  const shaftCenter = origin.add(arrowDir.scale(shaftLen / 2 + 0.3));
+  shaft.position.copyFrom(shaftCenter);
+
+  // Align to direction
+  const up = new BABYLON.Vector3(0, 1, 0);
+  const angle = Math.acos(Math.max(-1, Math.min(1, BABYLON.Vector3.Dot(up, arrowDir))));
+  const axis = BABYLON.Vector3.Cross(up, arrowDir).normalize();
+  if (axis.length() > 0.001) {
+    shaft.rotationQuaternion = BABYLON.Quaternion.RotationAxis(axis, angle);
+  } else if (arrowDir.y < 0) {
+    shaft.rotationQuaternion = BABYLON.Quaternion.RotationAxis(new BABYLON.Vector3(1, 0, 0), Math.PI);
+  }
+
+  // Cone tip
+  const cone = BABYLON.MeshBuilder.CreateCylinder('arrowCone', {
+    diameterTop: 0,
+    diameterBottom: 0.25,
+    height: 0.35,
+    tessellation: 8,
+  }, scene);
+  cone.material = arrowMat;
+  cone.isPickable = false;
+  const tipPos = origin.add(arrowDir.scale(shaftLen + 0.3 + 0.175));
+  cone.position.copyFrom(tipPos);
+  if (shaft.rotationQuaternion) {
+    cone.rotationQuaternion = shaft.rotationQuaternion.clone();
+  }
+
+  _arrowParts = [shaft, cone];
+  directionArrow = shaft; // reference for existence check
 
   // Update highlight position too
   if (selectedHighlight) {
@@ -873,11 +905,9 @@ function updateDirectionArrow() {
 }
 
 function removeDirectionArrow() {
-  if (directionArrow) {
-    if (directionArrow._head) directionArrow._head.dispose();
-    directionArrow.dispose();
-    directionArrow = null;
-  }
+  for (const p of _arrowParts) p.dispose();
+  _arrowParts = [];
+  directionArrow = null;
 }
 
 // ── Helper: cube world position ──

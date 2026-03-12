@@ -1,7 +1,7 @@
 import { getRandomWord, isValidWord, getWordTypes, isVerb, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v5.1.1';
+const VERSION = 'v5.1.2';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -559,15 +559,9 @@ function placeWord(text, startGx, startGz, dir, wordIdx, animated = false, start
   }
   if (minGy < 0) {
     const lift = -minGy; // how much to shift everything up
-    // Shift all existing cubes up in grid space
+    // Shift grid coordinates only (not physical positions — physics will move them)
     for (const c of cubes) {
       c.gy = (c.gy || 0) + lift;
-      // Move the actual mesh/physics body up
-      const pos = c.mesh.position;
-      c.mesh.position.set(pos.x, pos.y + lift, pos.z);
-      if (c.aggregate && c.aggregate.body) {
-        c.aggregate.body.disablePreStep = false; // let Babylon sync the new position
-      }
     }
     // Also shift word positions and the new word's positions
     for (const w of words) {
@@ -579,7 +573,17 @@ function placeWord(text, startGx, startGz, dir, wordIdx, animated = false, start
       p.gy += lift;
     }
     startGy += lift;
-    // Update selected cube's gy reference if needed
+
+    // Apply upward impulse to physically lift the structure (smooth, not teleport)
+    const liftImpulse = lift * 8.0; // tunable — enough to clear the space
+    for (const c of cubes) {
+      if (c.aggregate && c.aggregate.body) {
+        c.aggregate.body.applyImpulse(
+          new BABYLON.Vector3(0, liftImpulse, 0),
+          c.mesh.position
+        );
+      }
+    }
   }
 
   const wordEntry = { text, dir, positions: allPositions, _deleted: false };

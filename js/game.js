@@ -1,7 +1,7 @@
 import { getRandomWord, isValidWord, getWordTypes, isVerb, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v5.2.5';
+const VERSION = 'v5.2.6';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -525,8 +525,7 @@ function _placeNextLetter() {
     }
     q.startGy += 1;
 
-    // Set up visual interpolation — meshes start at old Y and lerp to new Y
-    _liftAnim = { cubes: liftCubes, startTime: performance.now() / 1000, duration: 0.08 };
+    // No animation — instant lift (physics already moved, mesh matches)
   }
 
   const cube = createStructureCube(l.letter, l.gx, l.gy, l.gz, l.wordIdx);

@@ -1,7 +1,7 @@
 import { getRandomWord, isValidWord, getWordTypes, isVerb, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v5.3.1';
+const VERSION = 'v5.3.2';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -1037,10 +1037,25 @@ function _checkDisconnected() {
 }
 
 function _spawnDebris(debrisCubes) {
+  // First pass: disconnect ALL constraints from all debris cubes
   for (const c of debrisCubes) {
-    // Disconnect constraints
     disconnectCube(c);
+  }
+  // Second pass: also remove any constraints that connected cubes still have to debris
+  for (const c of debrisCubes) {
+    for (const active of cubes) {
+      if (!active.constraints) continue;
+      active.constraints = active.constraints.filter(con => {
+        if (con.otherCube === c) {
+          try { active.aggregate.body.removeConstraint(con.constraint); } catch (e) {}
+          return false;
+        }
+        return true;
+      });
+    }
+  }
 
+  for (const c of debrisCubes) {
     // Remove from cubes array
     const idx = cubes.indexOf(c);
     if (idx !== -1) cubes.splice(idx, 1);
@@ -1051,7 +1066,7 @@ function _spawnDebris(debrisCubes) {
       c.mesh.material = makeLetterMaterial(c.letter, '#777', '#555', '#333');
     }
 
-    // Change collision group to debris
+    // Change collision group to debris — only collides with ground/debris
     if (c.aggregate) {
       setCollisionFiltering(c.aggregate, CG_DEBRIS, CG_GROUND | CG_DEBRIS);
     }

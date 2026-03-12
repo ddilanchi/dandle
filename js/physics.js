@@ -368,38 +368,88 @@ export class Physics {
   }
 
   // ═══════════════════════════════════════════════════
-  // GROWING CUBES (kinematic slide animation)
+  // FLYING LETTERS (dynamic bodies that push into place)
   // ═══════════════════════════════════════════════════
 
-  createGrowingBody(worldPos, worldRot) {
-    dbg('createGrowingBody at', `(${worldPos.x.toFixed(2)}, ${worldPos.y.toFixed(2)}, ${worldPos.z.toFixed(2)})`);
-    const desc = this.RAPIER.RigidBodyDesc.kinematicPositionBased()
+  /**
+   * Create a flying letter — a real dynamic body that collides with ground
+   * but ignores structure blocks. Give it an initial velocity toward target.
+   * @param {{x,y,z}} worldPos - spawn position in world space
+   * @param {{x,y,z}} targetWorldPos - where it needs to end up
+   * @param {number} speed - launch speed (units/sec)
+   * @returns {number} id
+   */
+  createFlyingLetter(worldPos, targetWorldPos, speed = 8) {
+    const dx = targetWorldPos.x - worldPos.x;
+    const dy = targetWorldPos.y - worldPos.y;
+    const dz = targetWorldPos.z - worldPos.z;
+    const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    const dir = dist > 0.001 ? { x: dx / dist, y: dy / dist, z: dz / dist } : { x: 1, y: 0, z: 0 };
+
+    dbg('createFlyingLetter from', `(${worldPos.x.toFixed(2)},${worldPos.y.toFixed(2)},${worldPos.z.toFixed(2)})`,
+      'to', `(${targetWorldPos.x.toFixed(2)},${targetWorldPos.y.toFixed(2)},${targetWorldPos.z.toFixed(2)})`,
+      'dist=', dist.toFixed(2), 'speed=', speed);
+
+    const desc = this.RAPIER.RigidBodyDesc.dynamic()
       .setTranslation(worldPos.x, worldPos.y, worldPos.z)
-      .setRotation(worldRot);
+      .setCanSleep(false)
+      .setLinearDamping(2.0)   // high damping so it decelerates near target
+      .setAngularDamping(5.0)  // don't spin much
+      .setGravityScale(0);     // ignore gravity while flying into place
     const body = this.world.createRigidBody(desc);
+
     const cd = this.RAPIER.ColliderDesc.cuboid(CUBE_HALF, CUBE_HALF, CUBE_HALF)
-      .setFriction(0.5)
+      .setFriction(STRUCT_FRICTION)
+      .setFrictionCombineRule(this.RAPIER.CoefficientCombineRule.Min)
       .setRestitution(0.0)
-      .setCollisionGroups(GROUPS_GROWING);
+      .setDensity(STRUCT_DENSITY)
+      .setCollisionGroups(GROUPS_GROWING);  // collides with ground only, not structure
     this.world.createCollider(cd, body);
 
+    // Launch toward target
+    body.setLinvel({ x: dir.x * speed, y: dir.y * speed, z: dir.z * speed }, true);
+
     const id = this._growId++;
-    this._growingBodies.set(id, body);
+    this._growingBodies.set(id, { body, target: targetWorldPos });
     return id;
   }
 
-  moveGrowingBody(id, worldPos, worldRot) {
-    const body = this._growingBodies.get(id);
-    if (!body) return;
-    body.setNextKinematicTranslation(worldPos);
-    body.setNextKinematicRotation(worldRot);
+  /**
+   * Get the current position of a flying letter.
+   */
+  getFlyingLetterPos(id) {
+    const entry = this._growingBodies.get(id);
+    if (!entry) return null;
+    const p = entry.body.translation();
+    return { x: p.x, y: p.y, z: p.z };
   }
 
-  removeGrowingBody(id) {
-    const body = this._growingBodies.get(id);
-    if (!body) { dbgWarn('removeGrowingBody: id not found:', id); return; }
-    dbg('removeGrowingBody:', id);
-    this.world.removeRigidBody(body);
+  /**
+   * Check if a flying letter has arrived at its target.
+   * @param {number} id
+   * @param {number} threshold - distance to consider "arrived"
+   * @returns {boolean}
+   */
+  isFlyingLetterArrived(id, threshold = 0.15) {
+    const entry = this._growingBodies.get(id);
+    if (!entry) return true;
+    const p = entry.body.translation();
+    const t = entry.target;
+    const dx = p.x - t.x, dy = p.y - t.y, dz = p.z - t.z;
+    const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    const v = entry.body.linvel();
+    const speed = Math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+    return dist < threshold || (dist < 0.3 && speed < 0.5);
+  }
+
+  /**
+   * Remove a flying letter body (called when it snaps into place).
+   */
+  removeFlyingLetter(id) {
+    const entry = this._growingBodies.get(id);
+    if (!entry) { dbgWarn('removeFlyingLetter: id not found:', id); return; }
+    dbg('removeFlyingLetter:', id);
+    this.world.removeRigidBody(entry.body);
     this._growingBodies.delete(id);
   }
 

@@ -7,7 +7,7 @@ import { Physics } from './physics.js';
 
 await RAPIER.init();
 
-const VERSION = 'v4.0.3';
+const VERSION = 'v4.1.0';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -225,7 +225,7 @@ scene.add(structureGroup);
 const cubes = [];       // { letter, gx, gy, gz, mesh, wordIdx }
 const words = [];       // { text, dir, positions }
 
-const TRANSLATE_SPEED = 1; // units per second — how fast new cubes slide in
+const FLYING_LETTER_SPEED = 8; // units/sec — how fast letters fly into position
 
 let endZone = null;
 let endZoneBox = null;
@@ -240,51 +240,125 @@ const debrisPieces = [];   // { group, physicsId, cubes } — detached grey frag
 const animations = [];  // { mesh, startTime, duration }
 const BLOCK_ANIM_DURATION = 0.35; // seconds per block slide-out
 
-// ── Sequential letter placement queue ──
+// ── Placement state ──
 let _placementQueue = null;
+let _flyingLetter = null; // { cube, flyId, targetX, targetY, targetZ }
 
-// ── Growth system ──
-// Kinematic body slides from parent position to target. Purely cosmetic
-// collision with ground only — no CG_PARENT hack needed.
-let _growingCube = null; // { cube, growId, fromX/Y/Z, toX/Y/Z, progress, distance }
+function updateFlyingLetter(dt) {
+  if (!_flyingLetter) return;
+  const fl = _flyingLetter;
 
-function updateCubeGrowth(dt) {
-  if (!_growingCube) return;
-  const gc = _growingCube;
+  // Sync mesh to physics body position (world → group-local)
+  const worldPos = physics.getFlyingLetterPos(fl.flyId);
+  if (!worldPos) { _flyingLetter = null; return; }
 
-  // Advance at constant speed
-  const step = (TRANSLATE_SPEED * dt) / Math.max(gc.distance, 0.01);
-  gc.progress = Math.min(gc.progress + step, 1);
-  const t = gc.progress;
+  // Convert world position to structureGroup local space for the mesh
+  const local = new THREE.Vector3(worldPos.x, worldPos.y, worldPos.z)
+    .sub(structureGroup.position);
+  // Undo group rotation
+  const invQ = structureGroup.quaternion.clone().invert();
+  local.applyQuaternion(invQ);
+  fl.cube.mesh.position.copy(local);
 
-  // Interpolate local position (group-local space)
-  const px = gc.fromX + (gc.toX - gc.fromX) * t;
-  const py = gc.fromY + (gc.toY - gc.fromY) * t;
-  const pz = gc.fromZ + (gc.toZ - gc.fromZ) * t;
+  // Check if arrived
+  if (physics.isFlyingLetterArrived(fl.flyId)) {
+    // Snap mesh to grid position
+    fl.cube.mesh.position.set(fl.cube.gx, 0.5 + fl.cube.gy, fl.cube.gz);
+    physics.removeFlyingLetter(fl.flyId);
+    _flyingLetter = null;
 
-  gc.cube.mesh.position.set(px, py, pz);
+    audio.pop(_placementQueue ? _placementQueue.index : 0);
 
-  // Move kinematic body in world space
-  const worldPos = new THREE.Vector3(px, py, pz)
-    .applyQuaternion(structureGroup.quaternion)
-    .add(structureGroup.position);
-  const rot = structureGroup.quaternion;
-  physics.moveGrowingBody(gc.growId,
-    { x: worldPos.x, y: worldPos.y, z: worldPos.z },
-    { x: rot.x, y: rot.y, z: rot.z, w: rot.w }
-  );
-
-  if (t >= 1) {
-    gc.cube.mesh.position.set(gc.toX, gc.toY, gc.toZ);
-    physics.removeGrowingBody(gc.growId);
-
-    _growingCube = null;
     // Advance to next letter in queue
     if (_placementQueue) {
       _placementQueue.index++;
       _placeNextLetter();
     }
   }
+}
+
+function _placeNextLetter() {
+  if (!_placementQueue) return;
+  const q = _placementQueue;
+
+  if (q.index >= q.letters.length) {
+    // All letters placed — add colliders and push
+    const gp = structureGroup.position;
+    const gr = structureGroup.quaternion;
+    const groupPos = { x: gp.x, y: gp.y, z: gp.z };
+    const groupRot = { x: gr.x, y: gr.y, z: gr.z, w: gr.w };
+
+    for (const c of q.letters) {
+      const cube = cubes.find(cb => cb.gx === c.gx && (cb.gy || 0) === c.gy && cb.gz === c.gz);
+      if (!cube || cube.colliderKey) continue;
+      cube.colliderKey = physics.addCubeCollider(cube, groupPos, groupRot);
+    }
+
+    // Apply push impulse in build direction
+    const pushStrength = 3.0 * q.letters.length;
+    const dv = q.dirVec;
+    const pushDir = new THREE.Vector3(dv.x, dv.y || 0, dv.z)
+      .applyQuaternion(structureGroup.quaternion);
+    physics.applyImpulse({
+      x: pushDir.x * pushStrength,
+      y: pushDir.y * pushStrength,
+      z: pushDir.z * pushStrength
+    });
+
+    _placementQueue = null;
+    clearGhosts();
+
+    // Select the last letter
+    const lastIdx = q.text.length - 1;
+    const lastGx = q.startGx + dv.x * lastIdx;
+    const lastGy = q.startGy + (dv.y || 0) * lastIdx;
+    const lastGz = q.startGz + dv.z * lastIdx;
+    const lastCube = cubes.find(c => c.gx === lastGx && (c.gy || 0) === lastGy && c.gz === lastGz);
+    if (lastCube) {
+      selectedCube = lastCube;
+      highlightCube(lastCube);
+      updateDirectionArrow();
+      selectedInfoEl.textContent = `Selected: "${lastCube.letter}" at (${lastCube.gx}, ${lastCube.gz})`;
+      inputContainer.classList.remove('hidden');
+      wordInput.value = '';
+      wordInput.focus();
+    }
+    return;
+  }
+
+  // Spawn the next letter as a flying physics body
+  const l = q.letters[q.index];
+  const mesh = makeLetterMesh(l.letter);
+
+  // Spawn position: previous letter's grid pos, or one step behind first letter
+  const prev = q.index > 0 ? q.letters[q.index - 1] : null;
+  const fromLocalX = prev ? prev.gx : (l.gx - q.dirVec.x);
+  const fromLocalY = prev ? (0.5 + prev.gy) : (0.5 + l.gy - (q.dirVec.y || 0));
+  const fromLocalZ = prev ? prev.gz : (l.gz - q.dirVec.z);
+
+  mesh.position.set(fromLocalX, fromLocalY, fromLocalZ);
+  structureGroup.add(mesh);
+
+  const cube = { letter: l.letter, gx: l.gx, gy: l.gy, gz: l.gz, mesh, wordIdx: l.wordIdx };
+  mesh.userData.cube = cube;
+  cubes.push(cube);
+
+  if (q.index === 0) clearGhosts();
+
+  // Convert spawn and target to world space
+  const spawnWorld = new THREE.Vector3(fromLocalX, fromLocalY, fromLocalZ)
+    .applyQuaternion(structureGroup.quaternion)
+    .add(structureGroup.position);
+  const targetWorld = new THREE.Vector3(l.gx, 0.5 + l.gy, l.gz)
+    .applyQuaternion(structureGroup.quaternion)
+    .add(structureGroup.position);
+
+  const flyId = physics.createFlyingLetter(
+    { x: spawnWorld.x, y: spawnWorld.y, z: spawnWorld.z },
+    { x: targetWorld.x, y: targetWorld.y, z: targetWorld.z }
+  );
+
+  _flyingLetter = { cube, flyId };
 }
 
 // ── Sync Three.js group from physics body ──
@@ -412,12 +486,9 @@ function updateGhostPreview() {
 }
 
 // ── Place a word in the structure ──
-// When animated=true, cubes are queued and placed one at a time.
-// When animated=false, all cubes placed instantly (used for starter word).
 function placeWord(text, startGx, startGz, dir, wordIdx, animated = false, startGy = 0) {
   const dirVec = dirToVec(dir);
 
-  // Compute ALL positions this word covers (including overlaps)
   const allPositions = [];
   for (let i = 0; i < text.length; i++) {
     allPositions.push({
@@ -430,14 +501,13 @@ function placeWord(text, startGx, startGz, dir, wordIdx, animated = false, start
   const wordEntry = { text, dir, positions: allPositions, _deleted: false };
   words.push(wordEntry);
 
-  // Build list of letters to place (skip existing)
   const letters = [];
   for (let i = 0; i < text.length; i++) {
     const gx = startGx + dirVec.x * i;
     const gy = startGy + (dirVec.y || 0) * i;
     const gz = startGz + dirVec.z * i;
     const existing = cubes.find(c => c.gx === gx && c.gy === gy && c.gz === gz);
-    if (existing) continue; // already placed, skip
+    if (existing) continue;
     letters.push({ letter: text[i], gx, gy, gz, wordIdx });
   }
 
@@ -454,7 +524,7 @@ function placeWord(text, startGx, startGz, dir, wordIdx, animated = false, start
     return;
   }
 
-  // Animated: queue letters for sequential placement
+  // Animated: each letter flies into place as a dynamic physics body
   _placementQueue = {
     letters,
     index: 0,
@@ -465,108 +535,7 @@ function placeWord(text, startGx, startGz, dir, wordIdx, animated = false, start
     startGy,
     startGz,
   };
-  _placeNextLetter(); // start first one immediately
-}
-
-function _placeNextLetter() {
-  if (!_placementQueue) return;
-  const q = _placementQueue;
-
-  if (q.index >= q.letters.length) {
-    // Word complete — add colliders incrementally (no body rebuild!)
-    console.log('[GAME] Word complete:', q.text, '| new letters:', q.letters.length, '| total cubes:', cubes.length);
-    const gp = structureGroup.position;
-    const gr = structureGroup.quaternion;
-    const groupPos = { x: gp.x, y: gp.y, z: gp.z };
-    const groupRot = { x: gr.x, y: gr.y, z: gr.z, w: gr.w };
-    console.log('[GAME] structureGroup pos=', groupPos, 'rot=', groupRot);
-
-    let added = 0, skipped = 0;
-    for (const c of q.letters) {
-      const cube = cubes.find(cb => cb.gx === c.gx && (cb.gy || 0) === c.gy && cb.gz === c.gz);
-      if (!cube || cube.colliderKey) { skipped++; continue; }
-      cube.colliderKey = physics.addCubeCollider(cube, groupPos, groupRot);
-      added++;
-    }
-    console.log('[GAME] Added', added, 'colliders, skipped', skipped);
-
-    // Apply push impulse in build direction
-    const pushStrength = 3.0 * q.letters.length;
-    const dv = q.dirVec;
-    const pushDir = new THREE.Vector3(dv.x, dv.y || 0, dv.z)
-      .applyQuaternion(structureGroup.quaternion);
-    physics.applyImpulse({
-      x: pushDir.x * pushStrength,
-      y: pushDir.y * pushStrength,
-      z: pushDir.z * pushStrength
-    });
-
-    _placementQueue = null;
-    clearGhosts();
-    // Select the last letter of the word
-    const lastIdx = q.text.length - 1;
-    const lastGx = q.startGx + dv.x * lastIdx;
-    const lastGy = q.startGy + (dv.y || 0) * lastIdx;
-    const lastGz = q.startGz + dv.z * lastIdx;
-    const lastCube = cubes.find(c => c.gx === lastGx && (c.gy || 0) === lastGy && c.gz === lastGz);
-    if (lastCube) {
-      selectedCube = lastCube;
-      highlightCube(lastCube);
-      updateDirectionArrow();
-      selectedInfoEl.textContent = `Selected: "${lastCube.letter}" at (${lastCube.gx}, ${lastCube.gz})`;
-      inputContainer.classList.remove('hidden');
-      wordInput.value = '';
-      wordInput.focus();
-    }
-    return;
-  }
-
-  const l = q.letters[q.index];
-  const mesh = makeLetterMesh(l.letter);
-
-  // Spawn INSIDE the parent cube, then slide to target
-  const prev = q.index > 0 ? q.letters[q.index - 1] : null;
-  const fromX = prev ? prev.gx : (l.gx - q.dirVec.x);
-  const fromY = prev ? (0.5 + prev.gy) : (0.5 + l.gy - (q.dirVec.y || 0));
-  const fromZ = prev ? prev.gz : (l.gz - q.dirVec.z);
-  const toX = l.gx, toY = 0.5 + l.gy, toZ = l.gz;
-
-  // Start at full size inside parent position
-  mesh.position.set(fromX, fromY, fromZ);
-
-  structureGroup.add(mesh);
-
-  const cube = { letter: l.letter, gx: l.gx, gy: l.gy, gz: l.gz, mesh, wordIdx: l.wordIdx };
-  mesh.userData.cube = cube;
-  cubes.push(cube);
-
-  // Clear all ghosts on first letter
-  if (q.index === 0) clearGhosts();
-
-  audio.pop(q.index);
-
-  console.log('[GAME] Growing letter', l.letter, 'from', `(${fromX},${fromY},${fromZ})`, 'to', `(${toX},${toY},${toZ})`);
-
-  // Create kinematic body at parent position for slide animation
-  const worldFrom = new THREE.Vector3(fromX, fromY, fromZ)
-    .applyQuaternion(structureGroup.quaternion)
-    .add(structureGroup.position);
-  const rot = structureGroup.quaternion;
-  const growId = physics.createGrowingBody(
-    { x: worldFrom.x, y: worldFrom.y, z: worldFrom.z },
-    { x: rot.x, y: rot.y, z: rot.z, w: rot.w }
-  );
-
-  const dx = toX - fromX, dy = toY - fromY, dz = toZ - fromZ;
-  const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
-  _growingCube = {
-    cube,
-    growId,
-    fromX, fromY, fromZ,
-    toX, toY, toZ,
-    progress: 0,
-    distance: dist,
-  };
+  _placeNextLetter();
 }
 
 function _arrowAlwaysOnTop(arrow) {
@@ -1808,7 +1777,7 @@ function updatePhysics(dt) {
   // Log structure group position every 2 seconds
   if (_physFrameCount % 120 === 1) {
     const sp = structureGroup.position;
-    console.log('[GAME] frame', _physFrameCount, '| structureGroup pos=', `(${sp.x.toFixed(2)}, ${sp.y.toFixed(2)}, ${sp.z.toFixed(2)})`, '| cubes=', cubes.length, '| growing=', !!_growingCube, '| queue=', !!_placementQueue);
+    console.log('[GAME] frame', _physFrameCount, '| structureGroup pos=', `(${sp.x.toFixed(2)}, ${sp.y.toFixed(2)}, ${sp.z.toFixed(2)})`, '| cubes=', cubes.length, '| queue=', !!_placementQueue);
   }
 
   // Sync debris pieces
@@ -1897,7 +1866,7 @@ function animate() {
 
   if (!paused) {
     updateAnimations();
-    updateCubeGrowth(dt);
+    updateFlyingLetter(dt);
     updateLetterZones();
     updateDirectionArrow();
     audio.setMusicIntensity(cubes.length);

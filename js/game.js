@@ -88,8 +88,9 @@ camera.lowerRadiusLimit = 4;
 camera.upperRadiusLimit = 50;
 camera.upperBetaLimit = Math.PI / 2 - 0.05;
 camera.panningSensibility = 100;
-// Left-click (0) = orbit only. Middle (1) and Right (2) = pan.
-camera.inputs.attached.pointers.buttons = [0];
+// Left-click (0) = orbit, Right-click (2) = pan, Middle (1) = pan.
+camera.inputs.attached.pointers.buttons = [0, 1, 2];
+let _cameraDetached = false;
 
 // Lights
 const ambient = new BABYLON.HemisphericLight('ambient', new BABYLON.Vector3(0, 1, 0), scene);
@@ -198,13 +199,13 @@ function _makeCanvasTex(letter, bgColor, borderColor, textColor) {
   const c = document.createElement('canvas');
   c.width = 128; c.height = 128;
   const ctx = c.getContext('2d');
-  ctx.fillStyle = bgColor || '#faf3e0';
+  ctx.fillStyle = bgColor || '#e8dcc8';
   ctx.fillRect(0, 0, 128, 128);
-  ctx.strokeStyle = borderColor || '#999';
-  ctx.lineWidth = 4;
+  ctx.strokeStyle = borderColor || '#8b7355';
+  ctx.lineWidth = 5;
   ctx.strokeRect(2, 2, 124, 124);
-  ctx.fillStyle = textColor || '#222';
-  ctx.font = 'bold 78px Arial';
+  ctx.fillStyle = textColor || '#1a1a1a';
+  ctx.font = 'bold 82px Arial';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(letter, 64, 68);
@@ -216,6 +217,7 @@ function makeLetterMaterial(letter, bgColor, borderColor, textColor) {
   const dataUrl = _makeCanvasTex(letter, bgColor, borderColor, textColor);
   const tex = new BABYLON.Texture(dataUrl, scene, false, true);
   mat.diffuseTexture = tex;
+  mat.emissiveColor = new BABYLON.Color3(0.15, 0.13, 0.1);
   _matte(mat);
   return mat;
 }
@@ -491,7 +493,7 @@ function _placeNextLetter() {
       selectedCube = lastCube;
       highlightCube(lastCube);
       updateDirectionArrow();
-      selectedInfoEl.textContent = `Selected: "${lastCube.letter}" at (${lastCube.gx}, ${lastCube.gz})`;
+      selectedInfoEl.textContent = `Selected: [${lastCube.letter}] at (${lastCube.gx}, ${lastCube.gy || 0}, ${lastCube.gz})`;
       inputContainer.classList.remove('hidden');
       wordInput.value = '';
       wordInput.focus();
@@ -704,18 +706,6 @@ function createEndZone(x, z, w, d, y = 0) {
     new BABYLON.Vector3(x + w / 2, y + 2, z + d / 2)
   );
 
-  // Vertical beacon — tall glowing pillar visible from far away
-  const beaconH = 12;
-  const beacon = BABYLON.MeshBuilder.CreateBox('beacon', { width: 0.3, height: beaconH, depth: 0.3 }, scene);
-  const bMat = new BABYLON.StandardMaterial('beaconMat', scene);
-  bMat.diffuseColor = new BABYLON.Color3(1, 0.2, 0.2);
-  bMat.emissiveColor = new BABYLON.Color3(1, 0.4, 0.3);
-  bMat.alpha = 0.5;
-  beacon.material = bMat;
-  beacon.position.set(x, y + beaconH / 2, z);
-  beacon.isPickable = false;
-  levelObstacles.push(beacon);
-
   // Glowing pillar if elevated
   if (y > 0) {
     const pillar = BABYLON.MeshBuilder.CreateBox('pillar', { width: w, height: y, depth: d }, scene);
@@ -842,6 +832,7 @@ function addLetterZone(cx, cz, size, type, letter) {
   mat.alpha = 0.7;
 
   const mesh = BABYLON.MeshBuilder.CreateGround('letterZone', { width: size, height: size }, scene);
+  mesh.rotation.z = Math.PI; // Flip 180° so text reads correctly from camera
   mesh.position.set(cx, 0.02, cz);
   mesh.material = mat;
   mesh.receiveShadows = true;
@@ -1194,8 +1185,11 @@ function _handleNavKey(key) {
     );
     if (neighbor) {
       selectedCube = neighbor;
+      _cameraDetached = false;
       highlightCube(neighbor);
-      selectedInfoEl.textContent = `Selected: [${neighbor.letter}] at (${neighbor.gx}, ${neighbor.gz})`;
+      selectedInfoEl.textContent = `Selected: [${neighbor.letter}] at (${neighbor.gx}, ${neighbor.gy || 0}, ${neighbor.gz})`;
+      inputContainer.classList.remove('hidden');
+      wordInput.focus();
       audio.select();
       updateGhostPreview();
     }
@@ -1382,6 +1376,7 @@ function startLevel() {
   animations.length = 0;
   selectedCube = null;
   _placementQueue = null;
+  _cameraDetached = false;
   clearGhosts();
   clearHighlight();
   removeDirectionArrow();
@@ -1508,7 +1503,11 @@ scene.onPointerObservable.add((pointerInfo) => {
     case BABYLON.PointerEventTypes.POINTERMOVE: {
       const dx = evt.clientX - mouseDownPos.x;
       const dy = evt.clientY - mouseDownPos.y;
-      if (Math.sqrt(dx * dx + dy * dy) > 5) isDrag = true;
+      if (Math.sqrt(dx * dx + dy * dy) > 5) {
+        isDrag = true;
+        // Right-click or middle-click drag = panning, detach camera
+        if (evt.button === 2 || evt.button === 1) _cameraDetached = true;
+      }
       break;
     }
     case BABYLON.PointerEventTypes.POINTERUP: {
@@ -1522,8 +1521,9 @@ scene.onPointerObservable.add((pointerInfo) => {
         const cube = pickResult.pickedMesh.metadata.cube;
         if (!cube || !cubes.includes(cube)) return;
         selectedCube = cube;
+        _cameraDetached = false;
         highlightCube(cube);
-        selectedInfoEl.textContent = `Selected: [${cube.letter}] at (${cube.gx}, ${cube.gz})`;
+        selectedInfoEl.textContent = `Selected: [${cube.letter}] at (${cube.gx}, ${cube.gy || 0}, ${cube.gz})`;
         inputContainer.classList.remove('hidden');
         wordInput.value = '';
     wordInput.focus();
@@ -1741,6 +1741,7 @@ function animateEndZone(time) {
 }
 
 function updateCamera() {
+  if (_cameraDetached) return;
   let target;
   if (selectedCube) {
     target = selectedCube.mesh.position;

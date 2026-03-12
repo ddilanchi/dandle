@@ -1,7 +1,7 @@
 import { getRandomWord, isValidWord, getWordTypes, isVerb, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v5.1.2';
+const VERSION = 'v5.1.3';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -178,9 +178,6 @@ const animations = [];
 const BLOCK_ANIM_DURATION = 0.35;
 
 let _placementQueue = null;
-
-// ── Active push (reaction force applied over time) ──
-let _activePush = null; // { dir: {x,y,z}, strength, startTime, duration, newCubeSet }
 
 // ── Ghost preview ──
 let _ghostMeshes = [];
@@ -477,20 +474,6 @@ function _placeNextLetter() {
     // All letters placed — start a sustained reaction push
     const dv = q.dirVec;
     const wordLen = q.letters.length;
-    // Collect which cubes are new (part of this word) so we can exclude them from push
-    const newCubeSet = new Set();
-    for (const l of q.letters) {
-      const c = cubes.find(cc => cc.gx === l.gx && (cc.gy || 0) === (l.gy || 0) && cc.gz === l.gz);
-      if (c) newCubeSet.add(c);
-    }
-    _activePush = {
-      dir: { x: -dv.x, y: -(dv.y || 0), z: -dv.z }, // opposite of build direction
-      strength: 5.0 * wordLen, // force per old cube per frame
-      startTime: performance.now() / 1000,
-      duration: 0.3,
-      newCubeSet,
-    };
-
     _placementQueue = null;
     clearGhosts();
 
@@ -559,11 +542,13 @@ function placeWord(text, startGx, startGz, dir, wordIdx, animated = false, start
   }
   if (minGy < 0) {
     const lift = -minGy; // how much to shift everything up
-    // Shift grid coordinates only (not physical positions — physics will move them)
+    // Only shift grid coordinates — physical positions stay where they are.
+    // The lock constraints will enforce correct spacing, so the solver
+    // naturally pushes the old structure upward when new cubes are placed
+    // at ground level. No teleport, no impulse.
     for (const c of cubes) {
       c.gy = (c.gy || 0) + lift;
     }
-    // Also shift word positions and the new word's positions
     for (const w of words) {
       if (w.positions) {
         for (const p of w.positions) p.gy = (p.gy || 0) + lift;
@@ -573,17 +558,6 @@ function placeWord(text, startGx, startGz, dir, wordIdx, animated = false, start
       p.gy += lift;
     }
     startGy += lift;
-
-    // Apply upward impulse to physically lift the structure (smooth, not teleport)
-    const liftImpulse = lift * 8.0; // tunable — enough to clear the space
-    for (const c of cubes) {
-      if (c.aggregate && c.aggregate.body) {
-        c.aggregate.body.applyImpulse(
-          new BABYLON.Vector3(0, liftImpulse, 0),
-          c.mesh.position
-        );
-      }
-    }
   }
 
   const wordEntry = { text, dir, positions: allPositions, _deleted: false };
@@ -1288,7 +1262,6 @@ function startLevel() {
   animations.length = 0;
   selectedCube = null;
   _placementQueue = null;
-  _activePush = null;
   clearGhosts();
   clearHighlight();
   removeDirectionArrow();
@@ -1708,28 +1681,6 @@ scene.registerBeforeRender(() => {
     const s = t * t * (3 - 2 * t); // smoothstep
     a.cube.mesh.scaling.set(s, s, s);
     if (t >= 1) animations.splice(i, 1);
-  }
-
-  // Sustained reaction push (Newton's 3rd law)
-  if (_activePush) {
-    const elapsed = time - _activePush.startTime;
-    if (elapsed >= _activePush.duration) {
-      _activePush = null;
-    } else {
-      // Ease out so force tapers off naturally
-      const t = 1 - (elapsed / _activePush.duration);
-      const force = _activePush.strength * t;
-      const d = _activePush.dir;
-      for (const c of cubes) {
-        if (_activePush.newCubeSet.has(c)) continue; // only push old structure
-        if (c.aggregate && c.aggregate.body) {
-          c.aggregate.body.applyForce(
-            new BABYLON.Vector3(d.x * force, d.y * force, d.z * force),
-            c.mesh.position
-          );
-        }
-      }
-    }
   }
 
   updateLetterZones();

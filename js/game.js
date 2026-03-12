@@ -1,7 +1,7 @@
 import { getRandomWord, isValidWord, getWordTypes, isVerb, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v5.2.1';
+const VERSION = 'v5.2.2';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -87,7 +87,7 @@ camera.attachControl(canvas, true);
 camera.lowerRadiusLimit = 4;
 camera.upperRadiusLimit = 30;
 camera.upperBetaLimit = Math.PI / 2 - 0.05;
-camera.panningSensibility = 0; // disable panning
+camera.panningSensibility = 100; // middle-click panning
 
 // Lights
 const ambient = new BABYLON.HemisphericLight('ambient', new BABYLON.Vector3(0, 1, 0), scene);

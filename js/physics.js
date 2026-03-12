@@ -44,8 +44,8 @@ function packGroups(membership, filter) {
 const GROUPS_GROUND    = packGroups(CG_GROUND, 0xffff);
 // Structure collides with ground + debris (not growing — growing is cosmetic)
 const GROUPS_STRUCTURE = packGroups(CG_STRUCTURE, CG_GROUND | CG_DEBRIS);
-// Growing only collides with ground (purely cosmetic slide, no structure push)
-const GROUPS_GROWING   = packGroups(CG_GROWING, CG_GROUND);
+// Growing collides with nothing — pure physics flight, no friction/blocking
+const GROUPS_GROWING   = packGroups(CG_GROWING, 0);
 // Debris collides with ground + structure + other debris
 const GROUPS_DEBRIS    = packGroups(CG_DEBRIS, CG_GROUND | CG_STRUCTURE | CG_DEBRIS);
 

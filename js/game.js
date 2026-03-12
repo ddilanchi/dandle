@@ -7,7 +7,7 @@ import { Physics } from './physics.js';
 
 await RAPIER.init();
 
-const VERSION = 'v4.1.1';
+const VERSION = 'v4.1.2';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');

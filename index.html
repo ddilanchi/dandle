@@ -4,16 +4,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Dandle</title>
-  <link rel="stylesheet" href="css/style.css?v=4.2.0">
-  <script type="importmap">
-  {
-    "imports": {
-      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
-      "@dimforge/rapier3d-compat": "https://esm.sh/@dimforge/rapier3d-compat@0.14.0"
-    }
-  }
-  </script>
+  <link rel="stylesheet" href="css/style.css?v=5.0.0">
+  <script src="https://cdn.babylonjs.com/babylon.js"></script>
+  <script src="https://cdn.babylonjs.com/havok/HavokPhysics_umd.js"></script>
 </head>
 <body>
   <div id="ui">
@@ -48,32 +41,12 @@
       <div class="settings-section">
         <h3>Graphics</h3>
         <div class="setting-row">
-          <span>Resolution</span>
-          <div class="setting-options" data-setting="resolution">
-            <button data-value="0.5">Low</button>
-            <button data-value="1">Medium</button>
-            <button data-value="native">High</button>
-          </div>
-        </div>
-        <div class="setting-row">
           <span>Shadows</span>
           <label class="toggle"><input type="checkbox" id="setting-shadows"><span class="toggle-slider"></span></label>
         </div>
         <div class="setting-row">
           <span>Fog</span>
           <label class="toggle"><input type="checkbox" id="setting-fog"><span class="toggle-slider"></span></label>
-        </div>
-        <div class="setting-row">
-          <span>Cinematic Tone</span>
-          <label class="toggle"><input type="checkbox" id="setting-tonemapping"><span class="toggle-slider"></span></label>
-        </div>
-        <div class="setting-row">
-          <span>Pixelate</span>
-          <div class="setting-options" data-setting="pixelate">
-            <button data-value="0">Off</button>
-            <button data-value="4">Low</button>
-            <button data-value="8">High</button>
-          </div>
         </div>
       </div>
       <button id="settings-close">CLOSE</button>
@@ -143,6 +116,6 @@
       }
     });
   </script>
-  <script type="module" src="js/game.js?v=4.2.0"></script>
+  <script type="module" src="js/game.js?v=5.0.0"></script>
 </body>
 </html>

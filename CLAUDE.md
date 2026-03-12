@@ -1,29 +1,45 @@
-# Dandle - Project Status (v4.0.1)
+# Dandle - Project Status (v5.0.0)
 
 ## What we are doing
 3D word-building physics puzzle game. Players click letter cubes, type words containing that letter to place them Scrabble-style, and use word placement impulses to push the structure into a red end zone.
 
 ## Current Progress
+- **v5.0.0: Complete engine migration from Three.js + Rapier3D to Babylon.js + Havok**
 - 6 playable levels with progressive obstacles
-- Full physics rewrite (v4.0.0): separate `js/physics.js` module wrapping Rapier3D
-- Incremental collider system — structure body created once, colliders added per word (no rebuild)
+- Individual physics bodies per cube with 6DOF lock constraints (no compound body)
+- Flying letter system — new letters spawn as dynamic bodies that push structure
 - Word validation via WordNet 3.1 (74k words)
 - Procedural audio (Web Audio API)
 - Level progression with unlock system
-- Graphics settings (resolution, shadows, fog, pixelation, tone mapping)
+- Graphics settings (shadows, fog)
 - Keyboard navigation (Shift+WASD/QE/Space)
 - Ghost preview of word placement
-- Debris system (deleted words break off as grey chunks)
+- Debris system (deleted words become grey physics objects)
 - GitHub Pages deployment (no build step)
 
 ## Architecture
-- **js/game.js** — Three.js rendering, game logic, UI, levels
-- **js/physics.js** — Rapier3D physics engine wrapper (clean API, no Three.js dependency)
+- **js/game.js** — Babylon.js rendering, Havok physics, game logic, UI, levels (single file)
 - **js/audio.js** — Procedural Web Audio
 - **js/wordlist.js** — WordNet dictionary loader
 
+### Physics Architecture (v5.0.0)
+- Each cube is its own `PhysicsAggregate` with mass=1
+- Adjacent cubes connected by `Physics6DoFConstraint` (lock all 6 axes)
+- No compound body — no body rebuilds, no COM management
+- Havok handles constraint solving, warmstarting, and contact cache automatically
+- Flying letters: separate dynamic bodies with sustained force toward target
+- Debris: just disconnect constraints and change collision group
+
+### Collision Filter Groups
+```
+CG_GROUND    = 1   // floor, walls, static geometry
+CG_STRUCTURE = 2   // main structure cubes
+CG_FLYING    = 4   // flying letters (ground + structure collision only)
+CG_DEBRIS    = 8   // detached chunks
+```
+
 ## Completed Steps
-- [x] Project scaffold with Three.js + ES modules
+- [x] Project scaffold with Three.js + ES modules (v1-v4)
 - [x] Checkerboard floor (green/beige)
 - [x] Letter cube generation with canvas textures
 - [x] Word placement and crossword validation
@@ -32,33 +48,25 @@
 - [x] GitHub Pages ready (no build step)
 - [x] 6 levels (flat, wall, elevated, gap, letter zones, zip line)
 - [x] Level progression and unlock system
-- [x] Graphics settings panel
 - [x] Word deletion and debris system
 - [x] Ghost preview for word placement
 - [x] Keyboard navigation (Shift+WASD/QE/Space)
-- [x] Physics engine rewrite — separate module, incremental colliders, no body rebuilds
-- [x] Collision group cleanup (removed CG_PARENT hack)
-- [x] Physics tuning (gravity 10, solver iterations 8, friction 0.1, damping 0.15)
+- [x] **v5.0.0: Babylon.js + Havok migration (individual bodies + lock constraints)**
 
 ## Next Steps
-- [ ] Verify physics stability across all 6 levels after v4.0 rewrite
-- [ ] Tune push impulse strength vs friction balance
+- [ ] Verify physics stability across all 6 levels after v5.0 migration
+- [ ] Tune constraint stiffness and damping
 - [ ] More level designs
 - [ ] Score/rating system
 - [ ] Visual polish (particles, animations)
 - [ ] Mobile touch support
 
-## Future Goals
-- Leaderboard
-- Custom level editor
-- Verb force system (verbs apply sustained directional thrust)
-
 ## Important Notes
 - Always commit and push after changes — testing happens via GitHub Pages in browser
 - **VERSION must be updated in ALL 3 places when bumping:**
-  1. `js/game.js` line ~10: `const VERSION = 'vX.X.X';`
+  1. `js/game.js` line ~5: `const VERSION = 'vX.X.X';`
   2. `index.html` CSS cache buster: `css/style.css?v=X.X.X`
   3. `index.html` JS cache buster: `js/game.js?v=X.X.X`
-  - If ANY of these are stale, the browser serves cached old code
-- Half-extent MUST be 0.5 (not 0.47) — see PHYSICS_ANIMATION.md for ground gap bug history
-- Structure body should NEVER be rebuilt during normal word placement — only on debris splits or level restart
+- CDN dependencies (loaded via script tags in index.html):
+  - `https://cdn.babylonjs.com/babylon.js`
+  - `https://cdn.babylonjs.com/havok/HavokPhysics_umd.js`

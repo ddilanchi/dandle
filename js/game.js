@@ -1,13 +1,7 @@
-import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import RAPIER from '@dimforge/rapier3d-compat';
-import { getRandomWord, isValidWord, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
+import { getRandomWord, isValidWord, getWordTypes, isVerb, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
-import { Physics } from './physics.js';
 
-await RAPIER.init();
-
-const VERSION = 'v4.2.0';
+const VERSION = 'v5.0.0';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -21,7 +15,6 @@ const submitBtn = document.getElementById('submit-word');
 const messageEl = document.getElementById('message');
 const levelCompleteEl = document.getElementById('level-complete');
 
-// Set version in both places from single source
 document.getElementById('version').textContent = VERSION;
 document.getElementById('intro-version').textContent = VERSION;
 const introScreen = document.getElementById('intro-screen');
@@ -32,7 +25,7 @@ let gameStarted = false;
 let paused = false;
 
 // ── Settings ──
-const DEFAULT_SETTINGS = { resolution: '1', shadows: true, fog: true, tonemapping: true, pixelate: 0 };
+const DEFAULT_SETTINGS = { shadows: true, fog: true };
 function loadSettings() {
   try { return { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem('dandle_settings') || '{}') }; }
   catch { return { ...DEFAULT_SETTINGS }; }
@@ -42,7 +35,6 @@ let currentSettings = loadSettings();
 
 const TOTAL_LEVELS = 6;
 
-// Progression stored in localStorage
 function getUnlockedLevels() {
   return parseInt(localStorage.getItem('dandle_unlocked') || '1', 10);
 }
@@ -64,7 +56,6 @@ function showLevelSelect() {
     if (isLocked) btn.classList.add('locked');
     else if (isCompleted) btn.classList.add('completed');
     else btn.classList.add('unlocked');
-
     if (isLocked) {
       btn.innerHTML = `<span class="lock-icon">&#128274;</span><span class="level-label">Locked</span>`;
     } else {
@@ -80,200 +71,441 @@ function showLevelSelect() {
   levelSelectEl.classList.remove('hidden');
 }
 
-// ── Three.js setup ──
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
-
-const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x87ceeb);
-scene.fog = new THREE.Fog(0x87ceeb, 30, 60);
-
-const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 100);
-camera.position.set(6, 8, 10);
-
-const controls = new OrbitControls(camera, canvas);
-controls.enableDamping = true;
-controls.dampingFactor = 0.08;
-controls.maxPolarAngle = Math.PI / 2 - 0.05;
-controls.minDistance = 4;
-controls.maxDistance = 30;
-controls.enablePan = false;
-controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.ROTATE };
-
-// ── Lights ──
-const ambient = new THREE.AmbientLight(0xffffff, 0.5);
-scene.add(ambient);
-const sun = new THREE.DirectionalLight(0xfff5e0, 1.2);
-sun.position.set(8, 15, 10);
-sun.castShadow = true;
-sun.shadow.mapSize.set(2048, 2048);
-sun.shadow.camera.left = -20;
-sun.shadow.camera.right = 20;
-sun.shadow.camera.top = 20;
-sun.shadow.camera.bottom = -20;
-scene.add(sun);
-
-// ── Pixelation blit pass ──
-const _blitCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-const _blitScene = new THREE.Scene();
-const _blitGeo = new THREE.PlaneGeometry(2, 2);
-const _blitMat = new THREE.MeshBasicMaterial();
-_blitScene.add(new THREE.Mesh(_blitGeo, _blitMat));
-let _pixelRT = null;
-
-function _getPixelDivisor(s) {
-  // 0 = off, 4 = low, 8 = high
-  return s.pixelate || 0;
-}
-
-function _ensurePixelRT(divisor) {
-  const w = Math.max(1, Math.floor(window.innerWidth / divisor));
-  const h = Math.max(1, Math.floor(window.innerHeight / divisor));
-  if (!_pixelRT || _pixelRT.width !== w || _pixelRT.height !== h) {
-    if (_pixelRT) _pixelRT.dispose();
-    _pixelRT = new THREE.WebGLRenderTarget(w, h, {
-      minFilter: THREE.NearestFilter,
-      magFilter: THREE.NearestFilter,
-    });
-  }
-  return _pixelRT;
-}
-
-function applySettings(s) {
-  const dpr = s.resolution === 'native' ? window.devicePixelRatio : parseFloat(s.resolution);
-  renderer.setPixelRatio(Math.min(dpr, window.devicePixelRatio));
-  renderer.shadowMap.enabled = s.shadows;
-  sun.castShadow = s.shadows;
-  scene.fog = s.fog ? new THREE.Fog(0x87ceeb, 30, 60) : null;
-  renderer.toneMapping = s.tonemapping ? THREE.ACESFilmicToneMapping : THREE.NoToneMapping;
-  if (!s.pixelate && _pixelRT) { _pixelRT.dispose(); _pixelRT = null; }
-}
-applySettings(currentSettings);
-
 // ── Audio ──
 const audio = new AudioManager();
 
-// ── Physics engine ──
-const physics = new Physics(RAPIER);
-console.log('[DANDLE] Physics engine', VERSION, 'initialized');
+// ── Babylon.js + Havok setup ──
+const engine = new BABYLON.Engine(canvas, true, { preserveDrawingBuffer: true, stencil: true });
+const scene = new BABYLON.Scene(engine);
 
-// ── Tiled cube floor (visual only — physics handled by Physics module) ──
-let floorMesh = null;
-const TILE_H = 1;
+// Sky color
+scene.clearColor = new BABYLON.Color4(0.529, 0.808, 0.922, 1); // sky blue
 
-// Build floor from an array of tile positions: [{ x, z }, ...]
-// If no tiles provided, builds a default 40x40 flat floor.
-function buildFloor(tiles) {
-  // Clean up old floor visual
-  if (floorMesh) { scene.remove(floorMesh); floorMesh = null; }
+// Camera
+const camera = new BABYLON.ArcRotateCamera('cam', -Math.PI / 4, Math.PI / 3, 16, new BABYLON.Vector3(0, 0, 0), scene);
+camera.attachControl(canvas, true);
+camera.lowerRadiusLimit = 4;
+camera.upperRadiusLimit = 30;
+camera.upperBetaLimit = Math.PI / 2 - 0.05;
+camera.panningSensibility = 0; // disable panning
 
-  // Default: flat 40x40 grid
-  if (!tiles) {
-    tiles = [];
-    for (let xi = -20; xi < 20; xi++) {
-      for (let zi = -20; zi < 20; zi++) {
-        tiles.push({ x: xi, z: zi, y: 0 });
-      }
-    }
+// Lights
+const ambient = new BABYLON.HemisphericLight('ambient', new BABYLON.Vector3(0, 1, 0), scene);
+ambient.intensity = 0.5;
+const sun = new BABYLON.DirectionalLight('sun', new BABYLON.Vector3(-0.5, -1, -0.3), scene);
+sun.intensity = 1.2;
+sun.position = new BABYLON.Vector3(8, 15, 10);
+
+// Shadows
+let shadowGen = null;
+function setupShadows() {
+  if (shadowGen) shadowGen.dispose();
+  if (currentSettings.shadows) {
+    shadowGen = new BABYLON.ShadowGenerator(2048, sun);
+    shadowGen.useBlurExponentialShadowMap = true;
+  } else {
+    shadowGen = null;
   }
+}
+setupShadows();
 
-  if (tiles.length === 0) return;
+// Fog
+function applySettings(s) {
+  if (s.fog) {
+    scene.fogMode = BABYLON.Scene.FOGMODE_LINEAR;
+    scene.fogColor = new BABYLON.Color3(0.529, 0.808, 0.922);
+    scene.fogStart = 30;
+    scene.fogEnd = 60;
+  } else {
+    scene.fogMode = BABYLON.Scene.FOGMODE_NONE;
+  }
+  setupShadows();
+}
+applySettings(currentSettings);
 
-  const green = new THREE.Color(0x6aad7a);
-  const beige = new THREE.Color(0xece0c0);
+// ── Havok physics ──
+let havokInstance = null;
+let hk = null; // HavokPlugin
 
-  // Visual: InstancedMesh
-  const geo = new THREE.BoxGeometry(1, TILE_H, 1);
-  const mat = new THREE.MeshStandardMaterial();
-  floorMesh = new THREE.InstancedMesh(geo, mat, tiles.length);
-  floorMesh.receiveShadow = true;
-  const dummy = new THREE.Object3D();
-  tiles.forEach((t, i) => {
-    const ty = (t.y || 0);
-    dummy.position.set(t.x + 0.5, ty - TILE_H / 2, t.z + 0.5);
-    dummy.updateMatrix();
-    floorMesh.setMatrixAt(i, dummy.matrix);
-    floorMesh.setColorAt(i, (t.x + t.z) % 2 === 0 ? green : beige);
-  });
-  floorMesh.instanceMatrix.needsUpdate = true;
-  if (floorMesh.instanceColor) floorMesh.instanceColor.needsUpdate = true;
-  scene.add(floorMesh);
-
-  // Physics
-  physics.createFloor(tiles);
+async function initPhysics() {
+  havokInstance = await HavokPhysics();
+  hk = new BABYLON.HavokPlugin(true, havokInstance);
+  scene.enablePhysics(new BABYLON.Vector3(0, -10, 0), hk);
+  console.log('[DANDLE] Babylon.js + Havok', VERSION, 'initialized');
 }
 
+// ── Physics constants ──
+const CUBE_HALF = 0.5;
+const STRUCT_FRICTION = 0.1;
+const STRUCT_RESTITUTION = 0.02;
+const STATIC_FRICTION = 0.8;
 
-// ── Raycaster ──
-const raycaster = new THREE.Raycaster();
-const mouse = new THREE.Vector2();
-const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
-const lastMouseWorld = new THREE.Vector3(); // mouse position on ground plane
+// ── Collision filter groups ──
+const CG_GROUND = 1;
+const CG_STRUCTURE = 2;
+const CG_FLYING = 4;
+const CG_DEBRIS = 8;
+
+function setCollisionFiltering(aggregate, membership, collidesWith) {
+  if (!aggregate || !aggregate.shape) return;
+  aggregate.shape.filterMembershipMask = membership;
+  aggregate.shape.filterCollideMask = collidesWith;
+}
 
 // ── Game state ──
 let selectedCube = null;
 let selectedHighlight = null;
 let levelComplete = false;
 let levelFalling = false;
-let structureGroup = new THREE.Group();
-scene.add(structureGroup);
 
-const cubes = [];       // { letter, gx, gy, gz, mesh, wordIdx }
-const words = [];       // { text, dir, positions }
+const cubes = [];       // { letter, gx, gy, gz, mesh, wordIdx, aggregate, constraints[] }
+const words = [];       // { text, dir, positions, _deleted }
 
-const FLYING_LETTER_SPEED = 8; // units/sec — how fast letters fly into position
-
+const FLYING_LETTER_SPEED = 8;
 let endZone = null;
 let endZoneBox = null;
-let directionArrow = null; // blue arrow showing word placement direction
-let currentDir = 'x+'; // current build direction (controlled by Shift+IJKL)
+let directionArrow = null;
+let currentDir = 'x+';
 let currentLevel = 1;
-const levelObstacles = []; // meshes added per level (walls, platforms, zones)
-const letterZones = [];    // { x, z, size, type: '+'/'-', letter, mesh }
-const debrisPieces = [];   // { group, physicsId, cubes } — detached grey fragments
+const levelObstacles = [];
+const letterZones = [];
+const debrisPieces = [];
+const floorMeshes = [];
+const floorAggregates = [];
 
-// ── Animation queue ──
-const animations = [];  // { mesh, startTime, duration }
-const BLOCK_ANIM_DURATION = 0.35; // seconds per block slide-out
+// ── Animation / placement queues ──
+const animations = [];
+const BLOCK_ANIM_DURATION = 0.35;
 
-// ── Placement state ──
 let _placementQueue = null;
-let _flyingLetter = null; // { cube, flyId, targetX, targetY, targetZ }
+let _flyingLetter = null; // { cube, targetPos, aggregate }
 
+// ── Ghost preview ──
+let _ghostMeshes = [];
+
+// ── Explosion ──
+const explosionPieces = [];
+
+// ── Letter mesh creation (canvas texture on box) ──
+function makeLetterTexture(letter, bgColor = '#f5ecd7', borderColor = '#999', textColor = '#222') {
+  const c = document.createElement('canvas');
+  c.width = 128; c.height = 128;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = bgColor;
+  ctx.fillRect(0, 0, 128, 128);
+  ctx.strokeStyle = borderColor;
+  ctx.lineWidth = 4;
+  ctx.strokeRect(2, 2, 124, 124);
+  ctx.fillStyle = textColor;
+  ctx.font = 'bold 78px Arial';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(letter, 64, 68);
+  const tex = new BABYLON.DynamicTexture('letterTex_' + letter + '_' + Math.random(), c, scene, false);
+  tex.update(false);
+  // Copy canvas data
+  const texCtx = tex.getContext();
+  texCtx.drawImage(c, 0, 0);
+  tex.update(false);
+  return tex;
+}
+
+function makeLetterMaterial(letter, bgColor, borderColor, textColor) {
+  const mat = new BABYLON.StandardMaterial('letterMat_' + letter + '_' + Math.random(), scene);
+  // Create canvas texture
+  const c = document.createElement('canvas');
+  c.width = 128; c.height = 128;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = bgColor || '#f5ecd7';
+  ctx.fillRect(0, 0, 128, 128);
+  ctx.strokeStyle = borderColor || '#999';
+  ctx.lineWidth = 4;
+  ctx.strokeRect(2, 2, 124, 124);
+  ctx.fillStyle = textColor || '#222';
+  ctx.font = 'bold 78px Arial';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(letter, 64, 68);
+
+  const tex = BABYLON.RawTexture.CreateRGBATexture(
+    null, 128, 128, scene, false, false
+  );
+  // Use DynamicTexture instead
+  const dt = new BABYLON.DynamicTexture('dt_' + Math.random(), { width: 128, height: 128 }, scene, false);
+  const dtCtx = dt.getContext();
+  dtCtx.drawImage(c, 0, 0);
+  dt.update(false);
+  mat.diffuseTexture = dt;
+  return mat;
+}
+
+function makeLetterMesh(letter) {
+  const mesh = BABYLON.MeshBuilder.CreateBox('cube_' + letter + '_' + Math.random(), { size: 0.94 }, scene);
+  const mat = makeLetterMaterial(letter);
+  mesh.material = mat;
+  if (shadowGen) {
+    shadowGen.addShadowCaster(mesh);
+    mesh.receiveShadows = true;
+  }
+  return mesh;
+}
+
+function makeGhostMesh(letter) {
+  const mesh = BABYLON.MeshBuilder.CreateBox('ghost_' + letter + '_' + Math.random(), { size: 0.94 }, scene);
+  const mat = makeLetterMaterial(letter, 'rgba(200, 220, 255, 0.3)', 'rgba(100, 150, 255, 0.5)', 'rgba(50, 80, 200, 0.6)');
+  mat.alpha = 0.4;
+  mesh.material = mat;
+  return mesh;
+}
+
+function makeGreyMesh(letter) {
+  const mesh = BABYLON.MeshBuilder.CreateBox('grey_' + letter + '_' + Math.random(), { size: 0.94 }, scene);
+  const mat = makeLetterMaterial(letter, '#777', '#555', '#333');
+  mesh.material = mat;
+  if (shadowGen) {
+    shadowGen.addShadowCaster(mesh);
+    mesh.receiveShadows = true;
+  }
+  return mesh;
+}
+
+// ── Floor building ──
+function buildFloor(tiles) {
+  // Clean up old floor
+  for (const m of floorMeshes) m.dispose();
+  for (const a of floorAggregates) a.dispose();
+  floorMeshes.length = 0;
+  floorAggregates.length = 0;
+
+  if (!tiles) {
+    tiles = [];
+    for (let xi = -20; xi < 20; xi++)
+      for (let zi = -20; zi < 20; zi++)
+        tiles.push({ x: xi, z: zi, y: 0 });
+  }
+  if (tiles.length === 0) return;
+
+  // Group tiles by y-level for efficient merged meshes
+  const byY = new Map();
+  for (const t of tiles) {
+    const y = t.y || 0;
+    if (!byY.has(y)) byY.set(y, []);
+    byY.get(y).push(t);
+  }
+
+  for (const [yLevel, group] of byY) {
+    // Create a single large box for each y-level as physics collider
+    let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+    for (const t of group) {
+      minX = Math.min(minX, t.x);
+      maxX = Math.max(maxX, t.x + 1);
+      minZ = Math.min(minZ, t.z);
+      maxZ = Math.max(maxZ, t.z + 1);
+    }
+
+    const green = new BABYLON.Color3(0.416, 0.678, 0.478);
+    const beige = new BABYLON.Color3(0.925, 0.878, 0.753);
+
+    // Visual: individual tiles using thin instances
+    const tileBox = BABYLON.MeshBuilder.CreateBox('floor_tile', { width: 1, height: 1, depth: 1 }, scene);
+    const tileMat = new BABYLON.StandardMaterial('floorMat_' + yLevel, scene);
+    tileMat.diffuseColor = green; // base color
+    tileBox.material = tileMat;
+    tileBox.receiveShadows = true;
+    tileBox.isPickable = false;
+
+    // Position the template tile off-screen, use instances
+    tileBox.position.set(group[0].x + 0.5, yLevel - 0.5, group[0].z + 0.5);
+
+    // For remaining tiles, use thin instances
+    if (group.length > 1) {
+      const matrices = [];
+      for (let i = 1; i < group.length; i++) {
+        const t = group[i];
+        const mat = BABYLON.Matrix.Translation(
+          (t.x + 0.5) - (group[0].x + 0.5),
+          0,
+          (t.z + 0.5) - (group[0].z + 0.5)
+        );
+        matrices.push(mat);
+      }
+      // Use instances instead of thin instances for simplicity
+      for (let i = 1; i < group.length; i++) {
+        const t = group[i];
+        const inst = tileBox.createInstance('floorInst_' + i);
+        inst.position.set(t.x + 0.5, yLevel - 0.5, t.z + 0.5);
+        inst.receiveShadows = true;
+        inst.isPickable = false;
+        floorMeshes.push(inst);
+      }
+    }
+    floorMeshes.push(tileBox);
+
+    // Physics: one big static box per y-level
+    const w = maxX - minX;
+    const d = maxZ - minZ;
+    const cx = (minX + maxX) / 2;
+    const cz = (minZ + maxZ) / 2;
+    const physBox = BABYLON.MeshBuilder.CreateBox('floorPhys_' + yLevel, { width: w, height: 1, depth: d }, scene);
+    physBox.position.set(cx, yLevel - 0.5, cz);
+    physBox.isVisible = false;
+    const agg = new BABYLON.PhysicsAggregate(physBox, BABYLON.PhysicsShapeType.BOX, {
+      mass: 0,
+      friction: STATIC_FRICTION,
+      restitution: 0.02,
+    }, scene);
+    setCollisionFiltering(agg, CG_GROUND, CG_STRUCTURE | CG_FLYING | CG_DEBRIS);
+    floorAggregates.push(agg);
+    floorMeshes.push(physBox);
+  }
+}
+
+// ── Direction helpers ──
+function dirToVec(dir) {
+  switch (dir) {
+    case 'x+': return { x: 1, y: 0, z: 0 };
+    case 'x-': return { x: -1, y: 0, z: 0 };
+    case 'z+': return { x: 0, y: 0, z: 1 };
+    case 'z-': return { x: 0, y: 0, z: -1 };
+    case 'y+': return { x: 0, y: 1, z: 0 };
+    case 'y-': return { x: 0, y: -1, z: 0 };
+  }
+}
+
+// ── Constraint management ──
+// Connect a cube to all its grid neighbors with lock constraints
+function connectCubeToNeighbors(cube) {
+  if (!cube.constraints) cube.constraints = [];
+  const gx = cube.gx, gy = cube.gy || 0, gz = cube.gz;
+
+  for (const other of cubes) {
+    if (other === cube) continue;
+    const ox = other.gx, oy = other.gy || 0, oz = other.gz;
+    const dx = Math.abs(gx - ox), dy = Math.abs(gy - oy), dz = Math.abs(gz - oz);
+    if (dx + dy + dz !== 1) continue; // not adjacent
+
+    // Create a 6DOF lock constraint between them
+    const pivotA = new BABYLON.Vector3((ox - gx) * 0.5, (oy - gy) * 0.5, (oz - gz) * 0.5);
+    const pivotB = new BABYLON.Vector3((gx - ox) * 0.5, (gy - oy) * 0.5, (gz - oz) * 0.5);
+
+    const constraint = new BABYLON.Physics6DoFConstraint({
+      pivotA,
+      pivotB,
+      axisA: new BABYLON.Vector3(1, 0, 0),
+      axisB: new BABYLON.Vector3(1, 0, 0),
+      perpAxisA: new BABYLON.Vector3(0, 1, 0),
+      perpAxisB: new BABYLON.Vector3(0, 1, 0),
+    }, [
+      { axis: BABYLON.PhysicsConstraintAxis.LINEAR_X, minLimit: 0, maxLimit: 0 },
+      { axis: BABYLON.PhysicsConstraintAxis.LINEAR_Y, minLimit: 0, maxLimit: 0 },
+      { axis: BABYLON.PhysicsConstraintAxis.LINEAR_Z, minLimit: 0, maxLimit: 0 },
+      { axis: BABYLON.PhysicsConstraintAxis.ANGULAR_X, minLimit: 0, maxLimit: 0 },
+      { axis: BABYLON.PhysicsConstraintAxis.ANGULAR_Y, minLimit: 0, maxLimit: 0 },
+      { axis: BABYLON.PhysicsConstraintAxis.ANGULAR_Z, minLimit: 0, maxLimit: 0 },
+    ], scene);
+
+    cube.aggregate.body.addConstraint(other.aggregate.body, constraint);
+    cube.constraints.push({ constraint, otherCube: other });
+    if (!other.constraints) other.constraints = [];
+    other.constraints.push({ constraint, otherCube: cube });
+  }
+}
+
+// Remove all constraints involving a cube
+function disconnectCube(cube) {
+  if (!cube.constraints) return;
+  for (const c of cube.constraints) {
+    try { cube.aggregate.body.removeConstraint(c.constraint); } catch (e) {}
+    // Remove from the other side too
+    if (c.otherCube && c.otherCube.constraints) {
+      c.otherCube.constraints = c.otherCube.constraints.filter(oc => oc.constraint !== c.constraint);
+    }
+  }
+  cube.constraints = [];
+}
+
+// ── Create a physics cube (structure member) ──
+function createStructureCube(letter, gx, gy, gz, wordIdx) {
+  const mesh = makeLetterMesh(letter);
+  mesh.position.set(gx, 0.5 + gy, gz);
+
+  const aggregate = new BABYLON.PhysicsAggregate(mesh, BABYLON.PhysicsShapeType.BOX, {
+    mass: 1,
+    friction: STRUCT_FRICTION,
+    restitution: STRUCT_RESTITUTION,
+  }, scene);
+
+  // Damping
+  aggregate.body.setLinearDamping(0.15);
+  aggregate.body.setAngularDamping(0.15);
+
+  setCollisionFiltering(aggregate, CG_STRUCTURE, CG_GROUND | CG_STRUCTURE | CG_FLYING | CG_DEBRIS);
+
+  const cube = { letter, gx, gy: gy || 0, gz, mesh, wordIdx, aggregate, constraints: [] };
+  mesh.metadata = { cube };
+  cubes.push(cube);
+
+  // Connect to neighbors
+  connectCubeToNeighbors(cube);
+
+  return cube;
+}
+
+// ── Flying letter system ──
 function updateFlyingLetter(dt) {
   if (!_flyingLetter) return;
   const fl = _flyingLetter;
 
-  // Sync mesh to physics body position (world → group-local)
-  const worldPos = physics.getFlyingLetterPos(fl.flyId);
-  if (!worldPos) { _flyingLetter = null; return; }
+  const pos = fl.cube.mesh.position;
+  const target = fl.targetPos;
+  const dx = target.x - pos.x;
+  const dy = target.y - pos.y;
+  const dz = target.z - pos.z;
+  const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
 
-  // Convert world position to structureGroup local space for the mesh
-  const local = new THREE.Vector3(worldPos.x, worldPos.y, worldPos.z)
-    .sub(structureGroup.position);
-  // Undo group rotation
-  const invQ = structureGroup.quaternion.clone().invert();
-  local.applyQuaternion(invQ);
-  fl.cube.mesh.position.copy(local);
+  if (dist < 0.15) {
+    // Arrived — snap and convert to structure cube
+    fl.cube.mesh.position.set(target.x, target.y, target.z);
 
-  // Check if arrived
-  if (physics.isFlyingLetterArrived(fl.flyId)) {
-    // Snap mesh to grid position
-    fl.cube.mesh.position.set(fl.cube.gx, 0.5 + fl.cube.gy, fl.cube.gz);
-    physics.removeFlyingLetter(fl.flyId);
+    // Remove the flying aggregate
+    if (fl.aggregate) {
+      fl.aggregate.dispose();
+      fl.cube.aggregate = null;
+    }
+
+    // Create proper structure aggregate
+    fl.cube.aggregate = new BABYLON.PhysicsAggregate(fl.cube.mesh, BABYLON.PhysicsShapeType.BOX, {
+      mass: 1,
+      friction: STRUCT_FRICTION,
+      restitution: STRUCT_RESTITUTION,
+    }, scene);
+    fl.cube.aggregate.body.setLinearDamping(0.15);
+    fl.cube.aggregate.body.setAngularDamping(0.15);
+    setCollisionFiltering(fl.cube.aggregate, CG_STRUCTURE, CG_GROUND | CG_STRUCTURE | CG_FLYING | CG_DEBRIS);
+
+    // Connect to neighbors
+    connectCubeToNeighbors(fl.cube);
+
     _flyingLetter = null;
-
     audio.pop(_placementQueue ? _placementQueue.index : 0);
 
-    // Advance to next letter in queue
     if (_placementQueue) {
       _placementQueue.index++;
       _placeNextLetter();
     }
+    return;
+  }
+
+  // Apply sustained force toward target
+  if (fl.aggregate && fl.aggregate.body) {
+    const forceMag = 40;
+    const fx = (dx / dist) * forceMag;
+    const fy = (dy / dist) * forceMag;
+    const fz = (dz / dist) * forceMag;
+    fl.aggregate.body.applyForce(
+      new BABYLON.Vector3(fx, fy, fz),
+      fl.cube.mesh.position
+    );
   }
 }
 
@@ -282,33 +514,25 @@ function _placeNextLetter() {
   const q = _placementQueue;
 
   if (q.index >= q.letters.length) {
-    // All letters placed — add colliders and push
-    const gp = structureGroup.position;
-    const gr = structureGroup.quaternion;
-    const groupPos = { x: gp.x, y: gp.y, z: gp.z };
-    const groupRot = { x: gr.x, y: gr.y, z: gr.z, w: gr.w };
-
-    for (const c of q.letters) {
-      const cube = cubes.find(cb => cb.gx === c.gx && (cb.gy || 0) === c.gy && cb.gz === c.gz);
-      if (!cube || cube.colliderKey) continue;
-      cube.colliderKey = physics.addCubeCollider(cube, groupPos, groupRot);
-    }
-
-    // Apply push impulse in build direction
+    // All letters placed — apply push impulse
     const pushStrength = 3.0 * q.letters.length;
     const dv = q.dirVec;
-    const pushDir = new THREE.Vector3(dv.x, dv.y || 0, dv.z)
-      .applyQuaternion(structureGroup.quaternion);
-    physics.applyImpulse({
-      x: pushDir.x * pushStrength,
-      y: pushDir.y * pushStrength,
-      z: pushDir.z * pushStrength
-    });
+
+    for (const c of cubes) {
+      if (c.aggregate && c.aggregate.body) {
+        const impulse = new BABYLON.Vector3(
+          dv.x * pushStrength / cubes.length,
+          (dv.y || 0) * pushStrength / cubes.length,
+          dv.z * pushStrength / cubes.length
+        );
+        c.aggregate.body.applyImpulse(impulse, c.mesh.position);
+      }
+    }
 
     _placementQueue = null;
     clearGhosts();
 
-    // Select the last letter
+    // Select the last placed letter
     const lastIdx = q.text.length - 1;
     const lastGx = q.startGx + dv.x * lastIdx;
     const lastGy = q.startGy + (dv.y || 0) * lastIdx;
@@ -326,116 +550,97 @@ function _placeNextLetter() {
     return;
   }
 
-  // Spawn the next letter as a flying physics body
+  // Spawn the next letter as a flying body
   const l = q.letters[q.index];
   const mesh = makeLetterMesh(l.letter);
 
-  // Spawn BEHIND the target (opposite build direction) so the letter
-  // pushes the structure forward as it slides into position
+  // Spawn behind target (opposite build direction)
   const spawnDist = 3;
-  const fromLocalX = l.gx - q.dirVec.x * spawnDist;
-  const fromLocalY = 0.5 + l.gy - (q.dirVec.y || 0) * spawnDist;
-  const fromLocalZ = l.gz - q.dirVec.z * spawnDist;
+  const fromX = l.gx - q.dirVec.x * spawnDist;
+  const fromY = 0.5 + l.gy - (q.dirVec.y || 0) * spawnDist;
+  const fromZ = l.gz - q.dirVec.z * spawnDist;
 
-  mesh.position.set(fromLocalX, fromLocalY, fromLocalZ);
-  structureGroup.add(mesh);
+  mesh.position.set(fromX, fromY, fromZ);
 
-  const cube = { letter: l.letter, gx: l.gx, gy: l.gy, gz: l.gz, mesh, wordIdx: l.wordIdx };
-  mesh.userData.cube = cube;
+  const cube = { letter: l.letter, gx: l.gx, gy: l.gy, gz: l.gz, mesh, wordIdx: l.wordIdx, aggregate: null, constraints: [] };
+  mesh.metadata = { cube };
   cubes.push(cube);
 
   if (q.index === 0) clearGhosts();
 
-  // Convert spawn and target to world space
-  const spawnWorld = new THREE.Vector3(fromLocalX, fromLocalY, fromLocalZ)
-    .applyQuaternion(structureGroup.quaternion)
-    .add(structureGroup.position);
-  const targetWorld = new THREE.Vector3(l.gx, 0.5 + l.gy, l.gz)
-    .applyQuaternion(structureGroup.quaternion)
-    .add(structureGroup.position);
+  // Create flying physics body
+  const aggregate = new BABYLON.PhysicsAggregate(mesh, BABYLON.PhysicsShapeType.BOX, {
+    mass: 1,
+    friction: 0.01,
+    restitution: 0.02,
+  }, scene);
+  aggregate.body.setLinearDamping(0.3);
+  aggregate.body.setAngularDamping(5); // High angular damping to prevent tumbling
 
-  const flyId = physics.createFlyingLetter(
-    { x: spawnWorld.x, y: spawnWorld.y, z: spawnWorld.z },
-    { x: targetWorld.x, y: targetWorld.y, z: targetWorld.z }
-  );
+  // Flying letters collide with structure and ground, but NOT other flying letters
+  setCollisionFiltering(aggregate, CG_FLYING, CG_GROUND | CG_STRUCTURE);
 
-  _flyingLetter = { cube, flyId };
+  cube.aggregate = aggregate;
+
+  const targetPos = new BABYLON.Vector3(l.gx, 0.5 + l.gy, l.gz);
+  _flyingLetter = { cube, targetPos, aggregate };
 }
 
-// ── Sync Three.js group from physics body ──
-function syncGroupFromBody() {
-  const t = physics.getStructureTransform();
-  if (!t) return;
-  const q = new THREE.Quaternion(t.rotation.x, t.rotation.y, t.rotation.z, t.rotation.w);
-  const anchorOffset = new THREE.Vector3(t.anchor.x, t.anchor.y, t.anchor.z).applyQuaternion(q);
-  structureGroup.position.set(t.position.x - anchorOffset.x, t.position.y - anchorOffset.y, t.position.z - anchorOffset.z);
-  structureGroup.quaternion.copy(q);
-}
-
-// ── Create letter cube mesh ──
-function makeLetterMesh(letter) {
-  const mats = [];
-  for (let i = 0; i < 6; i++) {
-    const c = document.createElement('canvas');
-    c.width = 128;
-    c.height = 128;
-    const ctx = c.getContext('2d');
-    ctx.fillStyle = '#f5ecd7';
-    ctx.fillRect(0, 0, 128, 128);
-    ctx.strokeStyle = '#999';
-    ctx.lineWidth = 4;
-    ctx.strokeRect(2, 2, 124, 124);
-    ctx.fillStyle = '#222';
-    ctx.font = 'bold 78px Arial';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(letter, 64, 68);
-    const tex = new THREE.CanvasTexture(c);
-    mats.push(new THREE.MeshStandardMaterial({ map: tex }));
+// ── Place a word ──
+function placeWord(text, startGx, startGz, dir, wordIdx, animated = false, startGy = 0) {
+  const dirVec = dirToVec(dir);
+  const allPositions = [];
+  for (let i = 0; i < text.length; i++) {
+    allPositions.push({
+      gx: startGx + dirVec.x * i,
+      gy: startGy + (dirVec.y || 0) * i,
+      gz: startGz + dirVec.z * i,
+    });
   }
-  const mesh = new THREE.Mesh(new THREE.BoxGeometry(0.94, 0.94, 0.94), mats);
-  mesh.castShadow = true;
-  mesh.receiveShadow = true;
-  return mesh;
-}
 
-// ── Ghost preview cubes ──
-let _ghostMeshes = [];
+  const wordEntry = { text, dir, positions: allPositions, _deleted: false };
+  words.push(wordEntry);
 
-function makeGhostMesh(letter) {
-  const mats = [];
-  for (let i = 0; i < 6; i++) {
-    const c = document.createElement('canvas');
-    c.width = 128;
-    c.height = 128;
-    const ctx = c.getContext('2d');
-    ctx.fillStyle = 'rgba(200, 220, 255, 0.3)';
-    ctx.fillRect(0, 0, 128, 128);
-    ctx.strokeStyle = 'rgba(100, 150, 255, 0.5)';
-    ctx.lineWidth = 4;
-    ctx.strokeRect(2, 2, 124, 124);
-    ctx.fillStyle = 'rgba(50, 80, 200, 0.6)';
-    ctx.font = 'bold 78px Arial';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(letter, 64, 68);
-    const tex = new THREE.CanvasTexture(c);
-    mats.push(new THREE.MeshStandardMaterial({ map: tex, transparent: true, opacity: 0.4 }));
+  const letters = [];
+  for (let i = 0; i < text.length; i++) {
+    const gx = startGx + dirVec.x * i;
+    const gy = startGy + (dirVec.y || 0) * i;
+    const gz = startGz + dirVec.z * i;
+    const existing = cubes.find(c => c.gx === gx && (c.gy || 0) === gy && c.gz === gz);
+    if (existing) continue;
+    letters.push({ letter: text[i], gx, gy, gz, wordIdx });
   }
-  const mesh = new THREE.Mesh(new THREE.BoxGeometry(0.94, 0.94, 0.94), mats);
-  mesh.renderOrder = 1;
-  return mesh;
+
+  if (!animated) {
+    for (const l of letters) {
+      createStructureCube(l.letter, l.gx, l.gy, l.gz, wordIdx);
+    }
+    return;
+  }
+
+  // Animated: flying letters
+  _placementQueue = {
+    letters,
+    index: 0,
+    dirVec,
+    text,
+    wordIdx,
+    startGx,
+    startGy,
+    startGz,
+  };
+  _placeNextLetter();
 }
 
+// ── Ghost preview ──
 function clearGhosts() {
-  for (const g of _ghostMeshes) structureGroup.remove(g);
+  for (const g of _ghostMeshes) g.dispose();
   _ghostMeshes = [];
 }
 
 function updateGhostPreview() {
   clearGhosts();
   if (!selectedCube || levelComplete || _placementQueue) return;
-
   const text = wordInput.value.toUpperCase().trim();
   if (text.length < 1) return;
 
@@ -443,7 +648,6 @@ function updateGhostPreview() {
   const dir = currentDir;
   const dv = dirToVec(dir);
 
-  // Find anchor index (same logic as submitWord)
   const allIdx = [];
   for (let i = 0; i < text.length; i++) {
     if (text[i] === letter) allIdx.push(i);
@@ -475,269 +679,128 @@ function updateGhostPreview() {
     const gx = startGx + dv.x * i;
     const gy = startGy + (dv.y || 0) * i;
     const gz = startGz + dv.z * i;
-    // Skip positions that already have a real cube
     const existing = cubes.find(c => c.gx === gx && (c.gy || 0) === gy && c.gz === gz);
     if (existing) continue;
 
     const ghost = makeGhostMesh(text[i]);
     ghost.position.set(gx, 0.5 + gy, gz);
-    structureGroup.add(ghost);
     _ghostMeshes.push(ghost);
   }
 }
 
-// ── Place a word in the structure ──
-function placeWord(text, startGx, startGz, dir, wordIdx, animated = false, startGy = 0) {
-  const dirVec = dirToVec(dir);
-
-  const allPositions = [];
-  for (let i = 0; i < text.length; i++) {
-    allPositions.push({
-      gx: startGx + dirVec.x * i,
-      gy: startGy + (dirVec.y || 0) * i,
-      gz: startGz + dirVec.z * i,
-    });
-  }
-
-  const wordEntry = { text, dir, positions: allPositions, _deleted: false };
-  words.push(wordEntry);
-
-  const letters = [];
-  for (let i = 0; i < text.length; i++) {
-    const gx = startGx + dirVec.x * i;
-    const gy = startGy + (dirVec.y || 0) * i;
-    const gz = startGz + dirVec.z * i;
-    const existing = cubes.find(c => c.gx === gx && c.gy === gy && c.gz === gz);
-    if (existing) continue;
-    letters.push({ letter: text[i], gx, gy, gz, wordIdx });
-  }
-
-  if (!animated) {
-    // Instant placement (starter word)
-    for (const l of letters) {
-      const mesh = makeLetterMesh(l.letter);
-      mesh.position.set(l.gx, 0.5 + l.gy, l.gz);
-      structureGroup.add(mesh);
-      const cube = { letter: l.letter, gx: l.gx, gy: l.gy, gz: l.gz, mesh, wordIdx };
-      mesh.userData.cube = cube;
-      cubes.push(cube);
-    }
-    return;
-  }
-
-  // Animated: each letter flies into place as a dynamic physics body
-  _placementQueue = {
-    letters,
-    index: 0,
-    dirVec,
-    text,
-    wordIdx,
-    startGx,
-    startGy,
-    startGz,
-  };
-  _placeNextLetter();
-}
-
-function _arrowAlwaysOnTop(arrow) {
-  arrow.renderOrder = 999;
-  arrow.traverse(child => {
-    if (child.material) {
-      child.material.depthTest = false;
-      child.material.depthWrite = false;
-      child.material.transparent = true;
-      child.material.opacity = 0.9;
-    }
-  });
-}
-
-// ── Tick animations ──
-function updateAnimations() {
-  const now = performance.now() / 1000;
-  for (let i = animations.length - 1; i >= 0; i--) {
-    const a = animations[i];
-
-    // Block scale-in or shrink-out
-    if (now < a.startTime) continue;
-    const elapsed = now - a.startTime;
-    let t = Math.min(elapsed / a.duration, 1);
-
-    // Play pop sound when this block starts appearing
-    if (!a.soundPlayed) {
-      audio.pop(a.soundIndex);
-      a.soundPlayed = true;
-    }
-
-    if (a.isShrink) {
-      // Shrink out
-      const s = 1 - t;
-      a.mesh.scale.set(s, s, s);
-      if (t >= 1) {
-        structureGroup.remove(a.mesh);
-        // Remove from cubes array
-        const ci = cubes.findIndex(c => c.mesh === a.mesh);
-        if (ci !== -1) cubes.splice(ci, 1);
-        animations.splice(i, 1);
-      }
-    } else if (a.isFadeOut) {
-      // Fade out ghost mesh
-      const mats = Array.isArray(a.mesh.material) ? a.mesh.material : [a.mesh.material];
-      for (const m of mats) m.opacity = 0.4 * (1 - t);
-      if (t >= 1) {
-        animations.splice(i, 1);
-        if (a.onComplete) a.onComplete();
-      }
-    } else {
-      // Scale-in (legacy)
-      a.mesh.scale.set(t, t, t);
-      if (t >= 1) {
-        a.mesh.scale.set(1, 1, 1);
-        animations.splice(i, 1);
-        if (a.onComplete) a.onComplete();
-      }
-    }
-  }
-}
-
-function dirToVec(dir) {
-  switch (dir) {
-    case 'x+': return { x: 1, y: 0, z: 0 };
-    case 'x-': return { x: -1, y: 0, z: 0 };
-    case 'z+': return { x: 0, y: 0, z: 1 };
-    case 'z-': return { x: 0, y: 0, z: -1 };
-    case 'y+': return { x: 0, y: 1, z: 0 };
-    case 'y-': return { x: 0, y: -1, z: 0 };
-  }
-}
-
-// ── Get 3D direction from selected cube toward mouse ──
-function dirFromMouse(cubeGx, cubeGy, cubeGz) {
-  // Get cube world position
-  const local = new THREE.Vector3(cubeGx, 0.5 + (cubeGy || 0), cubeGz);
-  local.applyQuaternion(structureGroup.quaternion);
-  local.add(structureGroup.position);
-
-  // Cast ray from mouse and find the closest point on the ray to the cube center
-  raycaster.setFromCamera(mouse, camera);
-  const closestPoint = new THREE.Vector3();
-  raycaster.ray.closestPointToPoint(local, closestPoint);
-
-  // Get world-space delta
-  const worldDelta = closestPoint.clone().sub(local);
-
-  // Transform delta back into the structure's local space
-  const invQ = structureGroup.quaternion.clone().invert();
-  worldDelta.applyQuaternion(invQ);
-
-  const dx = worldDelta.x;
-  const dy = worldDelta.y;
-  const dz = worldDelta.z;
-  const ax = Math.abs(dx);
-  const ay = Math.abs(dy);
-  const az = Math.abs(dz);
-
-  // Pick the dominant local axis
-  if (ay >= ax && ay >= az) {
-    return dy >= 0 ? 'y+' : 'y-';
-  }
-  if (ax >= az) {
-    return dx >= 0 ? 'x+' : 'x-';
-  }
-  return dz >= 0 ? 'z+' : 'z-';
-}
-
 // ── End zone ──
 function createEndZone(x, z, w, d, y = 0) {
-  const geo = new THREE.PlaneGeometry(w, d);
-  const mat = new THREE.MeshStandardMaterial({
-    color: 0xff3333,
-    emissive: 0xff2222,
-    emissiveIntensity: 0.6,
-    transparent: true,
-    opacity: 0.55,
-    side: THREE.DoubleSide,
-  });
-  endZone = new THREE.Mesh(geo, mat);
-  endZone.rotation.x = -Math.PI / 2;
+  const mat = new BABYLON.StandardMaterial('endZoneMat', scene);
+  mat.diffuseColor = new BABYLON.Color3(1, 0.2, 0.2);
+  mat.emissiveColor = new BABYLON.Color3(1, 0.13, 0.13);
+  mat.alpha = 0.55;
+
+  endZone = BABYLON.MeshBuilder.CreateGround('endZone', { width: w, height: d }, scene);
   endZone.position.set(x, y + 0.01, z);
-  scene.add(endZone);
+  endZone.material = mat;
+  endZone.isPickable = false;
 
-  // pulsing border
-  const edges = new THREE.EdgesGeometry(geo);
-  const line = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0xff6666, linewidth: 2 }));
-  line.rotation.x = -Math.PI / 2;
-  line.position.copy(endZone.position);
-  line.position.y += 0.01;
-  scene.add(line);
-  endZone.userData.line = line;
-
-  endZoneBox = new THREE.Box3().setFromCenterAndSize(
-    new THREE.Vector3(x, y + 0.5, z),
-    new THREE.Vector3(w, 2, d)
+  endZoneBox = new BABYLON.BoundingInfo(
+    new BABYLON.Vector3(x - w / 2, y, z - d / 2),
+    new BABYLON.Vector3(x + w / 2, y + 2, z + d / 2)
   );
 
-  // If elevated, add a glowing pillar beneath
+  // Glowing pillar if elevated
   if (y > 0) {
-    const pillarGeo = new THREE.BoxGeometry(w, y, d);
-    const pillarMat = new THREE.MeshStandardMaterial({
-      color: 0xff3333, emissive: 0xff2222, emissiveIntensity: 0.4, transparent: true, opacity: 0.25,
-    });
-    const pillar = new THREE.Mesh(pillarGeo, pillarMat);
+    const pillar = BABYLON.MeshBuilder.CreateBox('pillar', { width: w, height: y, depth: d }, scene);
+    const pMat = new BABYLON.StandardMaterial('pillarMat', scene);
+    pMat.diffuseColor = new BABYLON.Color3(1, 0.2, 0.2);
+    pMat.emissiveColor = new BABYLON.Color3(1, 0.13, 0.13);
+    pMat.alpha = 0.25;
+    pillar.material = pMat;
     pillar.position.set(x, y / 2, z);
-    scene.add(pillar);
+    pillar.isPickable = false;
     levelObstacles.push(pillar);
   }
 }
 
-// ── Level obstacles ──
+// ── Walls ──
 function addWall(x, z, w, h, d) {
-  const geo = new THREE.BoxGeometry(w, h, d);
-  const mat = new THREE.MeshStandardMaterial({ color: 0x666680 });
-  const wall = new THREE.Mesh(geo, mat);
+  const wall = BABYLON.MeshBuilder.CreateBox('wall', { width: w, height: h, depth: d }, scene);
+  const mat = new BABYLON.StandardMaterial('wallMat', scene);
+  mat.diffuseColor = new BABYLON.Color3(0.4, 0.4, 0.5);
+  wall.material = mat;
   wall.position.set(x, h / 2, z);
-  wall.castShadow = true;
-  wall.receiveShadow = true;
-  scene.add(wall);
+  if (shadowGen) {
+    shadowGen.addShadowCaster(wall);
+    wall.receiveShadows = true;
+  }
+  wall.isPickable = false;
   levelObstacles.push(wall);
-  wall.userData.isWall = true;
 
-  physics.addWall(x, z, w, h, d);
+  const agg = new BABYLON.PhysicsAggregate(wall, BABYLON.PhysicsShapeType.BOX, {
+    mass: 0,
+    friction: STATIC_FRICTION,
+    restitution: 0.02,
+  }, scene);
+  setCollisionFiltering(agg, CG_GROUND, CG_STRUCTURE | CG_FLYING | CG_DEBRIS);
+
   return wall;
 }
 
-// ── Zip line pole ──
+// ── Zip line ──
 function addZipLine(x1, y1, z1, x2, y2, z2, radius = 0.3) {
-  // Visual: cylinder between two points
-  const start = new THREE.Vector3(x1, y1, z1);
-  const end = new THREE.Vector3(x2, y2, z2);
-  const length = start.distanceTo(end);
-  const mid = start.clone().add(end).multiplyScalar(0.5);
-  const dir = end.clone().sub(start).normalize();
+  const start = new BABYLON.Vector3(x1, y1, z1);
+  const end = new BABYLON.Vector3(x2, y2, z2);
+  const length = BABYLON.Vector3.Distance(start, end);
+  const mid = BABYLON.Vector3.Center(start, end);
+  const dir = end.subtract(start).normalize();
 
-  const geo = new THREE.CylinderGeometry(radius, radius, length, 12);
-  const mat = new THREE.MeshStandardMaterial({ color: 0x888899, metalness: 0.8, roughness: 0.2 });
-  const pole = new THREE.Mesh(geo, mat);
-  pole.position.copy(mid);
-  // Align cylinder (default Y-axis) to the direction vector
-  const up = new THREE.Vector3(0, 1, 0);
-  const quat = new THREE.Quaternion().setFromUnitVectors(up, dir);
-  pole.quaternion.copy(quat);
-  pole.castShadow = true;
-  pole.receiveShadow = true;
-  scene.add(pole);
+  const pole = BABYLON.MeshBuilder.CreateCylinder('zipline', {
+    diameter: radius * 2,
+    height: length,
+    tessellation: 12,
+  }, scene);
+
+  const mat = new BABYLON.StandardMaterial('zipMat', scene);
+  mat.diffuseColor = new BABYLON.Color3(0.53, 0.53, 0.6);
+  mat.specularPower = 64;
+  pole.material = mat;
+  pole.position.copyFrom(mid);
+
+  // Align cylinder to direction
+  const up = new BABYLON.Vector3(0, 1, 0);
+  const angle = Math.acos(BABYLON.Vector3.Dot(up, dir));
+  const axis = BABYLON.Vector3.Cross(up, dir).normalize();
+  if (axis.length() > 0.001) {
+    pole.rotationQuaternion = BABYLON.Quaternion.RotationAxis(axis, angle);
+  }
+
+  if (shadowGen) {
+    shadowGen.addShadowCaster(pole);
+    pole.receiveShadows = true;
+  }
+  pole.isPickable = false;
   levelObstacles.push(pole);
 
-  // Physics: approximate with a series of box shapes along the line
+  // Physics: series of box segments
   const segments = Math.ceil(length / 2);
   const segLen = length / segments;
   for (let i = 0; i < segments; i++) {
     const t = (i + 0.5) / segments;
-    const pos = start.clone().lerp(end, t);
-    physics.addZipSegment(
-      { x: pos.x, y: pos.y, z: pos.z },
-      { x: quat.x, y: quat.y, z: quat.z, w: quat.w },
-      radius, segLen / 2, radius
-    );
+    const pos = BABYLON.Vector3.Lerp(start, end, t);
+    const seg = BABYLON.MeshBuilder.CreateBox('zipSeg_' + i, {
+      width: radius * 2,
+      height: segLen,
+      depth: radius * 2,
+    }, scene);
+    seg.position.copyFrom(pos);
+    if (pole.rotationQuaternion) {
+      seg.rotationQuaternion = pole.rotationQuaternion.clone();
+    }
+    seg.isVisible = false;
+    const agg = new BABYLON.PhysicsAggregate(seg, BABYLON.PhysicsShapeType.BOX, {
+      mass: 0,
+      friction: STATIC_FRICTION * 0.3,
+      restitution: 0.02,
+    }, scene);
+    setCollisionFiltering(agg, CG_GROUND, CG_STRUCTURE | CG_FLYING | CG_DEBRIS);
+    levelObstacles.push(seg);
   }
 
   return pole;
@@ -746,40 +809,33 @@ function addZipLine(x1, y1, z1, x2, y2, z2, radius = 0.3) {
 // ── Letter zones ──
 function addLetterZone(cx, cz, size, type, letter) {
   const c = document.createElement('canvas');
-  c.width = 256;
-  c.height = 256;
+  c.width = 256; c.height = 256;
   const ctx = c.getContext('2d');
-
-  // Background
-  if (type === '-') {
-    ctx.fillStyle = 'rgba(180, 60, 60, 0.55)';
-  } else {
-    ctx.fillStyle = 'rgba(50, 120, 180, 0.55)';
-  }
+  ctx.fillStyle = type === '-' ? 'rgba(180, 60, 60, 0.55)' : 'rgba(50, 120, 180, 0.55)';
   ctx.fillRect(0, 0, 256, 256);
-
-  // Border
   ctx.strokeStyle = type === '-' ? '#aa3333' : '#3366aa';
   ctx.lineWidth = 6;
   ctx.strokeRect(3, 3, 250, 250);
-
-  // Symbol and letter
   ctx.fillStyle = '#fff';
   ctx.font = 'bold 120px Arial';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(`${type}${letter}`, 128, 128);
 
-  const tex = new THREE.CanvasTexture(c);
-  const geo = new THREE.PlaneGeometry(size, size);
-  const mat = new THREE.MeshStandardMaterial({
-    map: tex, transparent: true, opacity: 0.7, side: THREE.DoubleSide,
-  });
-  const mesh = new THREE.Mesh(geo, mat);
-  mesh.rotation.x = -Math.PI / 2;
+  const dt = new BABYLON.DynamicTexture('zoneTex_' + Math.random(), { width: 256, height: 256 }, scene, false);
+  const dtCtx = dt.getContext();
+  dtCtx.drawImage(c, 0, 0);
+  dt.update(false);
+
+  const mat = new BABYLON.StandardMaterial('zoneMat_' + Math.random(), scene);
+  mat.diffuseTexture = dt;
+  mat.alpha = 0.7;
+
+  const mesh = BABYLON.MeshBuilder.CreateGround('letterZone', { width: size, height: size }, scene);
   mesh.position.set(cx, 0.02, cz);
-  mesh.receiveShadow = true;
-  scene.add(mesh);
+  mesh.material = mat;
+  mesh.receiveShadows = true;
+  mesh.isPickable = false;
   levelObstacles.push(mesh);
 
   const zone = { x: cx, z: cz, size, type, letter, mesh };
@@ -790,36 +846,86 @@ function addLetterZone(cx, cz, size, type, letter) {
 function getZoneAt(wx, wz) {
   for (const z of letterZones) {
     const half = z.size / 2;
-    if (Math.abs(wx - z.x) < half && Math.abs(wz - z.z) < half) {
-      return z;
-    }
+    if (Math.abs(wx - z.x) < half && Math.abs(wz - z.z) < half) return z;
   }
   return null;
 }
 
-function makeGreyMesh(letter) {
-  const mats = [];
-  for (let i = 0; i < 6; i++) {
-    const c = document.createElement('canvas');
-    c.width = 128; c.height = 128;
-    const ctx = c.getContext('2d');
-    ctx.fillStyle = '#777';
-    ctx.fillRect(0, 0, 128, 128);
-    ctx.strokeStyle = '#555';
-    ctx.lineWidth = 4;
-    ctx.strokeRect(2, 2, 124, 124);
-    ctx.fillStyle = '#333';
-    ctx.font = 'bold 78px Arial';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(letter, 64, 68);
-    const tex = new THREE.CanvasTexture(c);
-    mats.push(new THREE.MeshStandardMaterial({ map: tex }));
-  }
-  return new THREE.Mesh(new THREE.BoxGeometry(0.94, 0.94, 0.94), mats);
+// ── Selection highlight ──
+function highlightCube(cube) {
+  clearHighlight();
+  selectedHighlight = BABYLON.MeshBuilder.CreateBox('highlight', { size: 1.0 }, scene);
+  const mat = new BABYLON.StandardMaterial('highlightMat', scene);
+  mat.diffuseColor = new BABYLON.Color3(1, 0.84, 0);
+  mat.alpha = 0.3;
+  selectedHighlight.material = mat;
+  selectedHighlight.position.copyFrom(cube.mesh.position);
+  selectedHighlight.isPickable = false;
 }
 
-// Find connected components among cubes using adjacency (6-connected)
+function clearHighlight() {
+  if (selectedHighlight) {
+    selectedHighlight.dispose();
+    selectedHighlight = null;
+  }
+}
+
+// ── Direction arrow ──
+function updateDirectionArrow() {
+  if (!selectedCube) { removeDirectionArrow(); return; }
+  const dv = dirToVec(currentDir);
+  const arrowDir = new BABYLON.Vector3(dv.x, dv.y || 0, dv.z);
+  const origin = cubeWorldPos(selectedCube);
+
+  removeDirectionArrow();
+
+  // Create arrow using lines
+  const end = origin.add(arrowDir.scale(2));
+  const lines = BABYLON.MeshBuilder.CreateLines('dirArrow', {
+    points: [origin, end],
+  }, scene);
+  lines.color = new BABYLON.Color3(0.27, 0.53, 1);
+  lines.isPickable = false;
+  directionArrow = lines;
+
+  // Arrowhead
+  const headSize = 0.2;
+  const headBase = end.subtract(arrowDir.scale(headSize * 2));
+  // Simple cone-like arrowhead using lines
+  const perp1 = new BABYLON.Vector3(-arrowDir.z, 0, arrowDir.x).normalize().scale(headSize);
+  const perp2 = new BABYLON.Vector3(0, 1, 0).scale(headSize);
+  const headLines = BABYLON.MeshBuilder.CreateLineSystem('arrowHead', {
+    lines: [
+      [headBase.add(perp1), end],
+      [headBase.subtract(perp1), end],
+      [headBase.add(perp2), end],
+      [headBase.subtract(perp2), end],
+    ],
+  }, scene);
+  headLines.color = new BABYLON.Color3(0.27, 0.53, 1);
+  headLines.isPickable = false;
+  directionArrow._head = headLines;
+
+  // Update highlight position too
+  if (selectedHighlight) {
+    selectedHighlight.position.copyFrom(selectedCube.mesh.position);
+  }
+}
+
+function removeDirectionArrow() {
+  if (directionArrow) {
+    if (directionArrow._head) directionArrow._head.dispose();
+    directionArrow.dispose();
+    directionArrow = null;
+  }
+}
+
+// ── Helper: cube world position ──
+function cubeWorldPos(c) {
+  return c.mesh.position.clone();
+}
+
+// ── Debris system ──
 function _findComponents(cubeList) {
   const visited = new Set();
   const components = [];
@@ -838,9 +944,8 @@ function _findComponents(cubeList) {
       if (visited.has(ck)) continue;
       visited.add(ck);
       component.push(cur);
-      // Check 6 neighbors
-      for (const [dx, dy, dz] of [[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]]) {
-        const nk = `${cur.gx + dx},${(cur.gy || 0) + dy},${cur.gz + dz}`;
+      for (const [ddx, ddy, ddz] of [[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]]) {
+        const nk = `${cur.gx + ddx},${(cur.gy || 0) + ddy},${cur.gz + ddz}`;
         if (cubeMap.has(nk) && !visited.has(nk)) stack.push(cubeMap.get(nk));
       }
     }
@@ -850,55 +955,27 @@ function _findComponents(cubeList) {
 }
 
 function _spawnDebris(debrisCubes) {
-  // Create a new Three.js group for this chunk
-  const group = new THREE.Group();
-  scene.add(group);
-
-  const q = structureGroup.quaternion;
-  const gp = structureGroup.position;
-
-  // Compute local COM for debris
-  let cx = 0, cy = 0, cz = 0;
-  for (const c of debrisCubes) { cx += c.gx; cy += 0.5 + (c.gy || 0); cz += c.gz; }
-  cx /= debrisCubes.length; cy /= debrisCubes.length; cz /= debrisCubes.length;
-
-  // World position of COM
-  const comLocal = new THREE.Vector3(cx, cy, cz);
-  comLocal.applyQuaternion(q);
-  const worldPos = comLocal.add(gp);
-
   for (const c of debrisCubes) {
-    // Remove collider from structure body
-    physics.removeCubeCollider(c);
+    // Disconnect constraints
+    disconnectCube(c);
 
-    // Remove from main structure visuals
-    structureGroup.remove(c.mesh);
+    // Remove from cubes array
     const idx = cubes.indexOf(c);
     if (idx !== -1) cubes.splice(idx, 1);
 
-    // Create grey replacement at local offset from debris COM
-    const grey = makeGreyMesh(c.letter);
-    grey.position.set(c.gx - cx, 0.5 + (c.gy || 0) - cy, c.gz - cz);
-    grey.castShadow = true;
-    group.add(grey);
+    // Change to grey mesh visual
+    if (c.mesh && c.mesh.material) {
+      c.mesh.material.dispose();
+      c.mesh.material = makeLetterMaterial(c.letter, '#777', '#555', '#333');
+    }
+
+    // Change collision group to debris
+    if (c.aggregate) {
+      setCollisionFiltering(c.aggregate, CG_DEBRIS, CG_GROUND | CG_DEBRIS);
+    }
+
+    debrisPieces.push({ cube: c });
   }
-
-  // Position and rotate group to match structure
-  group.position.copy(worldPos);
-  group.quaternion.copy(q);
-
-  // Physics — delegate to physics engine
-  const linvel = physics.getLinvel();
-  const angvel = physics.getAngvel();
-  const { id } = physics.spawnDebris(
-    debrisCubes,
-    { x: worldPos.x, y: worldPos.y, z: worldPos.z },
-    { x: q.x, y: q.y, z: q.z, w: q.w },
-    linvel,
-    angvel
-  );
-
-  debrisPieces.push({ group, physicsId: id, cubes: debrisCubes });
 }
 
 function deleteWord(wordIdx) {
@@ -906,18 +983,13 @@ function deleteWord(wordIdx) {
   if (!w || w._deleted) return;
   w._deleted = true;
 
-  // Build set of positions covered by ALL OTHER active words (using stored positions)
   const protectedPositions = new Set();
   for (let wi = 0; wi < words.length; wi++) {
     if (wi === wordIdx || words[wi]._deleted) continue;
-    const ow = words[wi];
-    if (!ow.positions) continue;
-    for (const p of ow.positions) {
-      protectedPositions.add(`${p.gx},${p.gy},${p.gz}`);
-    }
+    if (!words[wi].positions) continue;
+    for (const p of words[wi].positions) protectedPositions.add(`${p.gx},${p.gy},${p.gz}`);
   }
 
-  // Find cubes at positions this word covers that are NOT protected by another word
   const thisWordPositions = new Set();
   if (w.positions) {
     for (const p of w.positions) thisWordPositions.add(`${p.gx},${p.gy},${p.gz}`);
@@ -926,12 +998,9 @@ function deleteWord(wordIdx) {
   const toDetach = [];
   for (const c of cubes) {
     const key = `${c.gx},${c.gy || 0},${c.gz}`;
-    if (thisWordPositions.has(key) && !protectedPositions.has(key)) {
-      toDetach.push(c);
-    }
+    if (thisWordPositions.has(key) && !protectedPositions.has(key)) toDetach.push(c);
   }
 
-  // Turn deleted cubes into debris immediately
   if (toDetach.length > 0) {
     if (selectedCube && toDetach.includes(selectedCube)) {
       selectedCube = null;
@@ -943,60 +1012,37 @@ function deleteWord(wordIdx) {
     _spawnDebris(toDetach);
   }
 
-  // Check remaining cubes for disconnected components
-  if (cubes.length === 0) return;
+  // Check remaining for disconnected components
+  if (cubes.length <= 1) return;
   const components = _findComponents(cubes);
-  if (components.length <= 1) {
-    // Rebuild structure body (topology changed, but still one piece)
-    const gp = structureGroup.position;
-    const gr = structureGroup.quaternion;
-    physics.createStructureBody(cubes,
-      { x: gp.x, y: gp.y, z: gp.z },
-      { x: gr.x, y: gr.y, z: gr.z, w: gr.w }
-    );
-    return;
-  }
+  if (components.length <= 1) return;
 
-  // Keep the largest component as main structure, detach the rest
   components.sort((a, b) => b.length - a.length);
   for (let i = 1; i < components.length; i++) {
     _spawnDebris(components[i]);
   }
-  const gp = structureGroup.position;
-  const gr = structureGroup.quaternion;
-  physics.createStructureBody(cubes,
-    { x: gp.x, y: gp.y, z: gp.z },
-    { x: gr.x, y: gr.y, z: gr.z, w: gr.w }
-  );
 }
 
+// ── Letter zone updates ──
 function updateLetterZones() {
   if (letterZones.length === 0 || levelComplete) return;
-  const sp = structureGroup.position;
-
   for (let wi = 0; wi < words.length; wi++) {
     const w = words[wi];
     if (w._deleted) continue;
-
-    // Get the word's cubes and check which zones they overlap
     const wordCubes = cubes.filter(c => c.wordIdx === wi);
     for (const c of wordCubes) {
-      const wx = c.gx + sp.x;
-      const wz = c.gz + sp.z;
+      const wx = c.mesh.position.x;
+      const wz = c.mesh.position.z;
       const zone = getZoneAt(wx, wz);
       if (!zone) continue;
-
       const wordHasLetter = w.text.includes(zone.letter);
-
       if (zone.type === '-' && wordHasLetter) {
-        // Minus zone: delete words containing this letter
         deleteWord(wi);
         audio.collision();
         showMessage(`"${w.text}" dissolved! Contains [${zone.letter}] in a -${zone.letter} zone`, '#ff6b6b');
         break;
       }
       if (zone.type === '+' && !wordHasLetter) {
-        // Plus zone: delete words NOT containing this letter
         deleteWord(wi);
         audio.collision();
         showMessage(`"${w.text}" dissolved! Missing [${zone.letter}] in a +${zone.letter} zone`, '#ff6b6b');
@@ -1006,104 +1052,10 @@ function updateLetterZones() {
   }
 }
 
-// ── Selection highlight ──
-function highlightCube(cube) {
-  clearHighlight();
-  const geo = new THREE.BoxGeometry(1.0, 1.0, 1.0);
-  const mat = new THREE.MeshBasicMaterial({ color: 0xffd700, transparent: true, opacity: 0.3 });
-  selectedHighlight = new THREE.Mesh(geo, mat);
-  selectedHighlight.position.copy(cube.mesh.position);
-  structureGroup.add(selectedHighlight);
-}
-
-function clearHighlight() {
-  if (selectedHighlight) {
-    structureGroup.remove(selectedHighlight);
-    selectedHighlight.geometry.dispose();
-    selectedHighlight.material.dispose();
-    selectedHighlight = null;
-  }
-}
-
-// ── Verb countdown timer sprite ──
-// ── Direction indicator arrow ──
-function updateDirectionArrow() {
-  if (!selectedCube) { removeDirectionArrow(); return; }
-  const dv = dirToVec(currentDir);
-  const arrowDir = new THREE.Vector3(dv.x, dv.y || 0, dv.z).normalize();
-  // Transform arrow direction from local to world space
-  arrowDir.applyQuaternion(structureGroup.quaternion);
-  const origin = cubeWorldPos(selectedCube);
-
-  if (directionArrow) {
-    directionArrow.position.copy(origin);
-    directionArrow.setDirection(arrowDir);
-  } else {
-    directionArrow = new THREE.ArrowHelper(arrowDir, origin, 2, 0x4488ff, 0.35, 0.2);
-    _arrowAlwaysOnTop(directionArrow);
-    scene.add(directionArrow);
-  }
-
-  // Update transparency mask around the arrow
-  _updateArrowMask(origin, arrowDir);
-}
-
-function removeDirectionArrow() {
-  if (directionArrow) {
-    scene.remove(directionArrow);
-    directionArrow = null;
-  }
-  _removeArrowMask();
-}
-
-// ── Transparency mask: makes cubes near the arrow semi-transparent ──
-let _maskedMeshes = []; // { mesh, originalOpacity, originalTransparent }
-
-function _updateArrowMask(origin, arrowDir) {
-  // Restore previously masked meshes
-  _removeArrowMask();
-
-  if (!selectedCube) return;
-
-  // Make cubes that are near the arrow line semi-transparent
-  const arrowEnd = origin.clone().add(arrowDir.clone().multiplyScalar(2.5));
-  const arrowLine = new THREE.Line3(origin, arrowEnd);
-  const tmpPoint = new THREE.Vector3();
-
-  for (const c of cubes) {
-    if (c === selectedCube) continue;
-    const wp = cubeWorldPos(c);
-    arrowLine.closestPointToPoint(wp, true, tmpPoint);
-    const dist = wp.distanceTo(tmpPoint);
-    if (dist < 0.8) {
-      // This cube is near the arrow — make it transparent
-      const mats = Array.isArray(c.mesh.material) ? c.mesh.material : [c.mesh.material];
-      for (const mat of mats) {
-        _maskedMeshes.push({
-          mat,
-          origTransparent: mat.transparent,
-          origOpacity: mat.opacity,
-        });
-        mat.transparent = true;
-        mat.opacity = 0.2;
-      }
-    }
-  }
-}
-
-function _removeArrowMask() {
-  for (const entry of _maskedMeshes) {
-    entry.mat.transparent = entry.origTransparent;
-    entry.mat.opacity = entry.origOpacity;
-  }
-  _maskedMeshes = [];
-}
-
-// ── Keyboard navigation (Shift+WASD / Shift+Space) ──
+// ── Keyboard navigation ──
 const ALL_DIRS = ['x+', 'x-', 'z+', 'z-', 'y+', 'y-'];
 
 function _getOpenFaces(cube) {
-  // Return directions where there's no adjacent cube
   const gx = cube.gx, gy = cube.gy || 0, gz = cube.gz;
   return ALL_DIRS.filter(dir => {
     const dv = dirToVec(dir);
@@ -1114,8 +1066,6 @@ function _getOpenFaces(cube) {
 
 function _handleNavKey(key) {
   if (!selectedCube) return false;
-
-  // Shift+WASD/QE: move selection to adjacent cube
   const moveMap = {
     'W': { x: 0, y: 0, z: -1 }, 'S': { x: 0, y: 0, z: 1 },
     'A': { x: -1, y: 0, z: 0 }, 'D': { x: 1, y: 0, z: 0 },
@@ -1137,8 +1087,6 @@ function _handleNavKey(key) {
     }
     return true;
   }
-
-  // Shift+Space: cycle through open faces
   if (key === ' ') {
     const openFaces = _getOpenFaces(selectedCube);
     if (openFaces.length === 0) return true;
@@ -1148,7 +1096,6 @@ function _handleNavKey(key) {
     updateGhostPreview();
     return true;
   }
-
   return false;
 }
 
@@ -1162,24 +1109,161 @@ function showMessage(text, color = '#ff6b6b') {
   msgTimeout = setTimeout(() => { messageEl.style.opacity = '0'; }, 2000);
 }
 
+// ── Crossword adjacency validation ──
+function validatePlacement(text, startGx, startGy, startGz, dv) {
+  const perpAxes = [];
+  if (dv.x === 0) perpAxes.push({ x: 1, y: 0, z: 0 }, { x: -1, y: 0, z: 0 });
+  if (dv.z === 0) perpAxes.push({ x: 0, y: 0, z: 1 }, { x: 0, y: 0, z: -1 });
+  if ((dv.y || 0) === 0) perpAxes.push({ x: 0, y: 1, z: 0 }, { x: 0, y: -1, z: 0 });
+
+  const beforeGx = startGx - dv.x;
+  const beforeGy = startGy - (dv.y || 0);
+  const beforeGz = startGz - dv.z;
+  const afterGx = startGx + dv.x * text.length;
+  const afterGy = startGy + (dv.y || 0) * text.length;
+  const afterGz = startGz + dv.z * text.length;
+
+  const cubeBefore = cubes.find(c => c.gx === beforeGx && (c.gy || 0) === beforeGy && c.gz === beforeGz);
+  const cubeAfter = cubes.find(c => c.gx === afterGx && (c.gy || 0) === afterGy && c.gz === afterGz);
+  if (cubeBefore) return `Word would extend from an existing [${cubeBefore.letter}]`;
+  if (cubeAfter) return `Word would extend into an existing [${cubeAfter.letter}]`;
+
+  for (let i = 0; i < text.length; i++) {
+    const gx = startGx + dv.x * i;
+    const gy = startGy + (dv.y || 0) * i;
+    const gz = startGz + dv.z * i;
+    const existing = cubes.find(c => c.gx === gx && (c.gy || 0) === gy && c.gz === gz);
+    if (existing) continue;
+    for (const perp of perpAxes) {
+      const nx = gx + perp.x, ny = gy + perp.y, nz = gz + perp.z;
+      const neighbor = cubes.find(c => c.gx === nx && (c.gy || 0) === ny && c.gz === nz);
+      if (neighbor) return `[${text[i]}] would be adjacent to [${neighbor.letter}]`;
+    }
+  }
+  return null;
+}
+
+// ── Word submission ──
+function submitWord() {
+  if (!selectedCube || levelComplete || _placementQueue) return;
+  const text = wordInput.value.toUpperCase().trim();
+  if (text.length < 2) { showMessage('Word must be at least 2 letters'); audio.error(); return; }
+  if (!/^[A-Z]+$/.test(text)) { showMessage('Letters only!'); audio.error(); return; }
+  if (!isValidWord(text)) { showMessage(`"${text}" is not a real word`); audio.error(); return; }
+
+  const letter = selectedCube.letter;
+  const allIdx = [];
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === letter) allIdx.push(i);
+  }
+  if (allIdx.length === 0) {
+    showMessage(`Word must contain the letter [${letter}]`);
+    audio.error();
+    return;
+  }
+
+  const dir = currentDir;
+  const dv = dirToVec(dir);
+  let bestIdx = -1, bestError = null;
+
+  for (const idx of allIdx) {
+    const sx = selectedCube.gx - dv.x * idx;
+    const sy = (selectedCube.gy || 0) - (dv.y || 0) * idx;
+    const sz = selectedCube.gz - dv.z * idx;
+    let conflict = false;
+    for (let i = 0; i < text.length; i++) {
+      const gx = sx + dv.x * i, gy = sy + (dv.y || 0) * i, gz = sz + dv.z * i;
+      const existing = cubes.find(c => c.gx === gx && (c.gy || 0) === gy && c.gz === gz);
+      if (existing && existing.letter !== text[i]) { conflict = true; break; }
+    }
+    if (conflict) continue;
+    const err = validatePlacement(text, sx, sy, sz, dv);
+    if (!err) { bestIdx = idx; break; }
+    if (!bestError) bestError = err;
+  }
+
+  if (bestIdx === -1) { showMessage(bestError || `Cannot place "${text}"`); audio.error(); return; }
+
+  const startGx = selectedCube.gx - dv.x * bestIdx;
+  const startGy = (selectedCube.gy || 0) - (dv.y || 0) * bestIdx;
+  const startGz = selectedCube.gz - dv.z * bestIdx;
+
+  // Easter egg
+  if (text === 'DAN') {
+    wordInput.value = '';
+    inputContainer.classList.add('hidden');
+    explodeStructure();
+    return;
+  }
+
+  inputContainer.classList.add('hidden');
+  wordInput.value = '';
+  if (levelComplete) return;
+
+  const wordIdx = words.length;
+  placeWord(text, startGx, startGz, dir, wordIdx, true, startGy);
+  lettersUsed += text.length;
+  showMessage(`"${text}" placed (${lettersUsed} letters used)`, '#aaddff');
+}
+
+// ── Explosion ──
+function explodeStructure() {
+  audio.explode();
+  showMessage('DAN?! BOOM!', '#ff2222');
+
+  for (const c of cubes) {
+    disconnectCube(c);
+    if (c.aggregate && c.aggregate.body) {
+      const vx = (Math.random() - 0.5) * 30;
+      const vy = 8 + Math.random() * 15;
+      const vz = (Math.random() - 0.5) * 30;
+      c.aggregate.body.setLinearVelocity(new BABYLON.Vector3(vx, vy, vz));
+      c.aggregate.body.setAngularVelocity(new BABYLON.Vector3(
+        (Math.random() - 0.5) * 15,
+        (Math.random() - 0.5) * 15,
+        (Math.random() - 0.5) * 15
+      ));
+      setCollisionFiltering(c.aggregate, CG_DEBRIS, CG_GROUND);
+    }
+    explosionPieces.push(c);
+  }
+
+  cubes.length = 0;
+  words.length = 0;
+  selectedCube = null;
+  clearHighlight();
+  removeDirectionArrow();
+  inputContainer.classList.add('hidden');
+  levelComplete = true;
+
+  setTimeout(() => {
+    for (const p of explosionPieces) {
+      if (p.aggregate) p.aggregate.dispose();
+      if (p.mesh) p.mesh.dispose();
+    }
+    explosionPieces.length = 0;
+    startLevel();
+  }, 3000);
+}
+
 // ── Score tracking ──
 let lettersUsed = 0;
 
-// ── Init level ──
+// ── Start level ──
 function startLevel() {
-  // Clear previous
-  while (structureGroup.children.length) {
-    structureGroup.remove(structureGroup.children[0]);
+  // Dispose all cubes
+  for (const c of cubes) {
+    disconnectCube(c);
+    if (c.aggregate) c.aggregate.dispose();
+    if (c.mesh) c.mesh.dispose();
   }
   cubes.length = 0;
   words.length = 0;
   animations.length = 0;
-  structureGroup.position.set(0, 0, 0);
-  structureGroup.quaternion.identity();
   selectedCube = null;
   _placementQueue = null;
   _flyingLetter = null;
-  _ghostMeshes = [];
+  clearGhosts();
   clearHighlight();
   removeDirectionArrow();
   levelComplete = false;
@@ -1189,54 +1273,48 @@ function startLevel() {
   inputContainer.classList.add('hidden');
   selectedInfoEl.textContent = '';
 
-  // Remove old end zone
-  if (endZone) {
-    scene.remove(endZone);
-    if (endZone.userData.line) scene.remove(endZone.userData.line);
-    endZone = null;
-  }
+  // Remove end zone
+  if (endZone) { endZone.dispose(); endZone = null; }
+  endZoneBox = null;
 
-  // Remove old obstacles and zones
-  for (const o of levelObstacles) scene.remove(o);
+  // Remove obstacles
+  for (const o of levelObstacles) o.dispose();
   levelObstacles.length = 0;
   letterZones.length = 0;
 
-  // Reset physics engine (clean slate)
-  physics.reset();
-
-  // Remove debris visuals
+  // Remove debris
   for (const d of debrisPieces) {
-    scene.remove(d.group);
+    if (d.cube && d.cube.aggregate) d.cube.aggregate.dispose();
+    if (d.cube && d.cube.mesh) d.cube.mesh.dispose();
   }
   debrisPieces.length = 0;
 
-  // Build floor for this level
+  // Remove explosion pieces
+  for (const p of explosionPieces) {
+    if (p.aggregate) p.aggregate.dispose();
+    if (p.mesh) p.mesh.dispose();
+  }
+  explosionPieces.length = 0;
+
+  // Build floor
   if (currentLevel === 4) {
-    // Two islands with a gap
     const tiles = [];
     for (let x = -8; x < 5; x++)
-      for (let z = -5; z < 5; z++)
-        tiles.push({ x, z, y: 0 });
+      for (let z = -5; z < 5; z++) tiles.push({ x, z, y: 0 });
     for (let x = 9; x < 18; x++)
-      for (let z = -5; z < 5; z++)
-        tiles.push({ x, z, y: 0 });
+      for (let z = -5; z < 5; z++) tiles.push({ x, z, y: 0 });
     buildFloor(tiles);
   } else if (currentLevel === 5) {
-    // Narrow corridor forcing you through letter zones
     const tiles = [];
     for (let x = -8; x < 22; x++)
-      for (let z = -2; z < 2; z++)
-        tiles.push({ x, z, y: 0 });
+      for (let z = -2; z < 2; z++) tiles.push({ x, z, y: 0 });
     buildFloor(tiles);
   } else if (currentLevel === 6) {
-    // Zip line: elevated start island, lower end island
     const tiles = [];
     for (let x = -6; x < 4; x++)
-      for (let z = -4; z < 4; z++)
-        tiles.push({ x, z, y: 10 });
+      for (let z = -4; z < 4; z++) tiles.push({ x, z, y: 10 });
     for (let x = 20; x < 30; x++)
-      for (let z = -4; z < 4; z++)
-        tiles.push({ x, z, y: 0 });
+      for (let z = -4; z < 4; z++) tiles.push({ x, z, y: 0 });
     buildFloor(tiles);
   } else {
     buildFloor();
@@ -1248,113 +1326,80 @@ function startLevel() {
   const startY = currentLevel === 6 ? 10 : 0;
   placeWord(word, startX, 0, 'x+', 0, false, startY);
   lettersUsed = word.length;
-  console.log('[GAME] startLevel: placing word', word, '| cubes:', cubes.length, '| startX:', startX, '| startY:', startY);
-  const initTransform = physics.createStructureBody(cubes);
-  console.log('[GAME] startLevel: structure body created, transform=', initTransform);
 
-  // Camera target
+  // Camera
   const camTargetY = startY;
-  controls.target.set(0, camTargetY, 0);
-  camera.position.set(6, camTargetY + 8, 10);
+  camera.target = new BABYLON.Vector3(0, camTargetY, 0);
+  camera.alpha = -Math.PI / 4;
+  camera.beta = Math.PI / 3;
+  camera.radius = 16;
 
   const LEVEL_HINTS = {
     1: 'Build words to push your structure into the red zone!',
     2: 'A wall blocks the way. Find a path around it!',
     3: 'The goal is in the air! Build upward momentum!',
     4: 'Two islands! Bridge the gap or launch across!',
-    5: 'Letter zones! -X deletes words with X. +X deletes words WITHOUT X. Choose your words carefully!',
-    6: 'Zip line! Build a hook shape to slide down the pole to the end zone!',
+    5: 'Letter zones! -X deletes words with X. +X deletes words WITHOUT X.',
+    6: 'Zip line! Build a hook to slide down the pole!',
   };
 
-  // ── Level configs ──
   switch (currentLevel) {
-    case 1:
-      createEndZone(10, 0, 4, 4);
-      break;
-
-    case 2:
-      createEndZone(12, 0, 4, 4);
-      addWall(6, 0, 1, 3, 10);
-      break;
-
-    case 3:
-      createEndZone(10, 0, 4, 4, 4);
-      break;
-
-    case 4:
-      createEndZone(14, 0, 4, 4);
-      break;
-
+    case 1: createEndZone(10, 0, 4, 4); break;
+    case 2: createEndZone(12, 0, 4, 4); addWall(6, 0, 1, 3, 10); break;
+    case 3: createEndZone(10, 0, 4, 4, 4); break;
+    case 4: createEndZone(14, 0, 4, 4); break;
     case 5: {
-      // Letter zone level - narrow corridor, end zone high in the air
       createEndZone(18, 0, 4, 4, 8);
-
-      // Letter zones span the narrow corridor between start and end
       const zoneLetters = 'AEIORSTLN';
-      const zoneSize = 3;
       for (let col = 0; col < 5; col++) {
-        const zx = 2 + col * zoneSize;
+        const zx = 2 + col * 3;
         const type = col % 2 === 0 ? '-' : '+';
         const letter = zoneLetters[Math.floor(Math.random() * zoneLetters.length)];
-        addLetterZone(zx, 0, zoneSize, type, letter);
+        addLetterZone(zx, 0, 3, type, letter);
       }
       break;
     }
-
     case 6: {
-      // Zip line: angled pole from high start island to low end island
       createEndZone(25, 0, 4, 4);
-      // Pole from start island edge to end island edge
       addZipLine(3, 12, 0, 21, 2, 0, 0.3);
       break;
     }
-
-    default:
-      createEndZone(10, 0, 4, 4);
-      break;
+    default: createEndZone(10, 0, 4, 4); break;
   }
 
   levelInfoEl.textContent = `Level ${currentLevel}`;
   hintEl.textContent = LEVEL_HINTS[currentLevel] || 'Reach the red zone!';
-  // Start music for this level
   audio.startMusic(currentLevel);
+
+  console.log('[DANDLE] Level', currentLevel, 'started | cubes:', cubes.length);
 }
 
 // ── Click handling ──
-let mouseDownPos = new THREE.Vector2();
+let mouseDownPos = { x: 0, y: 0 };
 let isDrag = false;
 
-canvas.addEventListener('pointerdown', (e) => {
-  mouseDownPos.set(e.clientX, e.clientY);
+scene.onPointerDown = (evt) => {
+  mouseDownPos = { x: evt.clientX, y: evt.clientY };
   isDrag = false;
   audio.init();
-});
+};
 
-canvas.addEventListener('pointermove', (e) => {
-  const dx = e.clientX - mouseDownPos.x;
-  const dy = e.clientY - mouseDownPos.y;
+scene.onPointerMove = (evt) => {
+  const dx = evt.clientX - mouseDownPos.x;
+  const dy = evt.clientY - mouseDownPos.y;
   if (Math.sqrt(dx * dx + dy * dy) > 5) isDrag = true;
+};
 
-  // Track mouse on ground plane
-  mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
-  mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
-  raycaster.setFromCamera(mouse, camera);
-  raycaster.ray.intersectPlane(groundPlane, lastMouseWorld);
-});
-
-canvas.addEventListener('pointerup', (e) => {
+scene.onPointerUp = (evt) => {
   if (isDrag || levelComplete) return;
 
-  mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
-  mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
-  raycaster.setFromCamera(mouse, camera);
+  const pickResult = scene.pick(evt.clientX, evt.clientY, (mesh) => {
+    return mesh.metadata && mesh.metadata.cube;
+  });
 
-  const meshes = cubes.map(c => c.mesh);
-  const hits = raycaster.intersectObjects(meshes);
-
-  if (hits.length > 0) {
-    const cube = hits[0].object.userData.cube;
-    if (!cube || cube._debris) { return; }
+  if (pickResult.hit && pickResult.pickedMesh) {
+    const cube = pickResult.pickedMesh.metadata.cube;
+    if (!cube) return;
     selectedCube = cube;
     highlightCube(cube);
     selectedInfoEl.textContent = `Selected: [${cube.letter}] at (${cube.gx}, ${cube.gz})`;
@@ -1369,175 +1414,18 @@ canvas.addEventListener('pointerup', (e) => {
     selectedInfoEl.textContent = '';
     inputContainer.classList.add('hidden');
   }
-});
+};
 
-// ── Crossword adjacency validation ──
-// Ensures no new cube is placed adjacent to existing cubes unless it's
-// a proper intersection (shared position with matching letter).
-// Prevents parallel stacking and random letter adjacencies.
-function validatePlacement(text, startGx, startGy, startGz, dv) {
-  // Determine the perpendicular axes based on word direction
-  const perpAxes = [];
-  if (dv.x === 0) perpAxes.push({ x: 1, y: 0, z: 0 }, { x: -1, y: 0, z: 0 });
-  if (dv.z === 0) perpAxes.push({ x: 0, y: 0, z: 1 }, { x: 0, y: 0, z: -1 });
-  if ((dv.y || 0) === 0) perpAxes.push({ x: 0, y: 1, z: 0 }, { x: 0, y: -1, z: 0 });
-
-  // Also check along the word direction beyond the word ends
-  const beforeGx = startGx - dv.x;
-  const beforeGy = startGy - (dv.y || 0);
-  const beforeGz = startGz - dv.z;
-  const afterGx = startGx + dv.x * text.length;
-  const afterGy = startGy + (dv.y || 0) * text.length;
-  const afterGz = startGz + dv.z * text.length;
-
-  // Check if there's an existing cube just before or after the word
-  const cubeBefore = cubes.find(c => c.gx === beforeGx && (c.gy || 0) === beforeGy && c.gz === beforeGz);
-  const cubeAfter = cubes.find(c => c.gx === afterGx && (c.gy || 0) === afterGy && c.gz === afterGz);
-  if (cubeBefore) return `Word would extend from an existing [${cubeBefore.letter}] — invalid adjacency`;
-  if (cubeAfter) return `Word would extend into an existing [${cubeAfter.letter}] — invalid adjacency`;
-
-  for (let i = 0; i < text.length; i++) {
-    const gx = startGx + dv.x * i;
-    const gy = startGy + (dv.y || 0) * i;
-    const gz = startGz + dv.z * i;
-
-    // Skip positions where a cube already exists (intersection)
-    const existing = cubes.find(c => c.gx === gx && (c.gy || 0) === gy && c.gz === gz);
-    if (existing) continue;
-
-    // For each new cube, check perpendicular neighbors
-    for (const perp of perpAxes) {
-      const nx = gx + perp.x;
-      const ny = gy + perp.y;
-      const nz = gz + perp.z;
-      const neighbor = cubes.find(c => c.gx === nx && (c.gy || 0) === ny && c.gz === nz);
-      if (neighbor) {
-        return `[${text[i]}] would be adjacent to [${neighbor.letter}] — no valid cross-word`;
-      }
-    }
-  }
-  return null; // valid
-}
-
-// ── Word type spinner ──
-// ── Word submission ──
-function submitWord() {
-  if (!selectedCube || levelComplete || _placementQueue) return;
-  const text = wordInput.value.toUpperCase().trim();
-  if (text.length < 2) {
-    showMessage('Word must be at least 2 letters');
-    audio.error();
-    return;
-  }
-  if (!/^[A-Z]+$/.test(text)) {
-    showMessage('Letters only!');
-    audio.error();
-    return;
-  }
-  if (!isValidWord(text)) {
-    showMessage(`"${text}" is not a real word`);
-    audio.error();
-    return;
-  }
-  const letter = selectedCube.letter;
-
-  // Find ALL positions of the selected letter in the word
-  const allIdx = [];
-  for (let i = 0; i < text.length; i++) {
-    if (text[i] === letter) allIdx.push(i);
-  }
-  if (allIdx.length === 0) {
-    showMessage(`Word must contain the letter [${letter}]`);
-    audio.error();
-    return;
-  }
-
-  const dir = currentDir;
-  const dv = dirToVec(dir);
-
-  // Try each possible anchor position — use the first one that works
-  let bestIdx = -1;
-  let bestError = null;
-
-  for (const idx of allIdx) {
-    const sx = selectedCube.gx - dv.x * idx;
-    const sy = (selectedCube.gy || 0) - (dv.y || 0) * idx;
-    const sz = selectedCube.gz - dv.z * idx;
-
-    // Check letter conflicts
-    let conflict = false;
-    for (let i = 0; i < text.length; i++) {
-      const gx = sx + dv.x * i;
-      const gy = sy + (dv.y || 0) * i;
-      const gz = sz + dv.z * i;
-      const existing = cubes.find(c => c.gx === gx && (c.gy || 0) === gy && c.gz === gz);
-      if (existing && existing.letter !== text[i]) { conflict = true; break; }
-    }
-    if (conflict) continue;
-
-    // Check adjacency
-    const err = validatePlacement(text, sx, sy, sz, dv);
-    if (!err) { bestIdx = idx; break; }
-    if (!bestError) bestError = err;
-  }
-
-  if (bestIdx === -1) {
-    showMessage(bestError || `Cannot place "${text}" in this direction`);
-    audio.error();
-    return;
-  }
-
-  const idx = bestIdx;
-  const startGx = selectedCube.gx - dv.x * idx;
-  const startGy = (selectedCube.gy || 0) - (dv.y || 0) * idx;
-  const startGz = selectedCube.gz - dv.z * idx;
-
-  // Final conflict check (for error message — should pass since we validated above)
-  for (let i = 0; i < text.length; i++) {
-    const gx = startGx + dv.x * i;
-    const gy = startGy + (dv.y || 0) * i;
-    const gz = startGz + dv.z * i;
-    const existing = cubes.find(c => c.gx === gx && (c.gy || 0) === gy && c.gz === gz);
-    if (existing && existing.letter !== text[i]) {
-      showMessage(`Conflict: [${text[i]}] overlaps [${existing.letter}]`);
-      audio.error();
-      return;
-    }
-  }
-
-  // Easter egg: DAN makes everything explode
-  if (text === 'DAN') {
-    wordInput.value = '';
-    inputContainer.classList.add('hidden');
-    explodeStructure();
-    return;
-  }
-
-  inputContainer.classList.add('hidden');
-  wordInput.value = '';
-
-  if (levelComplete) return;
-  const wordIdx = words.length;
-  placeWord(text, startGx, startGz, dir, wordIdx, true, startGy);
-  lettersUsed += text.length;
-  showMessage(`"${text}" placed (${lettersUsed} letters used)`, '#aaddff');
-}
-
+// ── Input handlers ──
 submitBtn.addEventListener('click', submitWord);
-// Keep input focused whenever a cube is selected
 wordInput.addEventListener('blur', () => {
   if (selectedCube && !levelComplete && !paused && !_placementQueue) {
     setTimeout(() => wordInput.focus(), 0);
   }
 });
-
 wordInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { submitWord(); return; }
-
-  // Arrow keys: let them bubble to window for camera control
   if (e.key.startsWith('Arrow')) return;
-
-  // Shift+WASD/QE/Space: navigation
   if (e.shiftKey && _handleNavKey(e.key.toUpperCase())) {
     e.preventDefault();
     e.stopPropagation();
@@ -1545,92 +1433,16 @@ wordInput.addEventListener('keydown', (e) => {
   }
   e.stopPropagation();
 });
-
-// Update ghost preview as user types
 wordInput.addEventListener('input', updateGhostPreview);
 
-// ── Explosion (DAN easter egg) ──
-function explodeStructure() {
-  audio.explode();
-  showMessage('DAN?! BOOM!', '#ff2222');
-
-  // Fling every cube outward with random velocity
-  const now = performance.now() / 1000;
-  for (const c of cubes) {
-    const mesh = c.mesh;
-    // Detach from structure group into scene so they fly independently
-    const worldPos = new THREE.Vector3();
-    mesh.getWorldPosition(worldPos);
-    structureGroup.remove(mesh);
-    scene.add(mesh);
-    mesh.position.copy(worldPos);
-
-    // Random explosion velocity
-    const vx = (Math.random() - 0.5) * 30;
-    const vy = 8 + Math.random() * 15;
-    const vz = (Math.random() - 0.5) * 30;
-    const spin = {
-      x: (Math.random() - 0.5) * 15,
-      y: (Math.random() - 0.5) * 15,
-      z: (Math.random() - 0.5) * 15,
-    };
-
-    // Animate each piece as a physics projectile
-    const startTime = now;
-    const piece = { mesh, vx, vy, vz, spin, startTime };
-    explosionPieces.push(piece);
-  }
-
-  // Remove arrows, sprites, highlights
-  while (structureGroup.children.length) {
-    structureGroup.remove(structureGroup.children[0]);
-  }
-  cubes.length = 0;
-  words.length = 0;
-  animations.length = 0;
-  selectedCube = null;
-  clearHighlight();
-  removeDirectionArrow();
-  inputContainer.classList.add('hidden');
-
-  // Restart after the explosion settles
-  levelComplete = true;
-  setTimeout(() => {
-    // Clean up explosion pieces
-    for (const p of explosionPieces) scene.remove(p.mesh);
-    explosionPieces.length = 0;
-    startLevel();
-  }, 3000);
-}
-
-const explosionPieces = [];
-
-function updateExplosion(dt) {
-  for (const p of explosionPieces) {
-    p.vy -= 20 * dt; // gravity
-    p.mesh.position.x += p.vx * dt;
-    p.mesh.position.y += p.vy * dt;
-    p.mesh.position.z += p.vz * dt;
-    p.mesh.rotation.x += p.spin.x * dt;
-    p.mesh.rotation.y += p.spin.y * dt;
-    p.mesh.rotation.z += p.spin.z * dt;
-  }
-}
-
-// ── Restart button ──
-restartBtn.addEventListener('click', () => {
-  audio.stopMusic();
-  startLevel();
-});
-
-// ── Level select button ──
-const levelSelectBtn = document.getElementById('level-select-btn');
-levelSelectBtn.addEventListener('click', () => {
+// ── UI buttons ──
+restartBtn.addEventListener('click', () => { audio.stopMusic(); startLevel(); });
+document.getElementById('level-select-btn').addEventListener('click', () => {
   audio.stopMusic();
   showLevelSelect();
 });
 
-// ── Settings panel ──
+// ── Settings ──
 const settingsScreen = document.getElementById('settings-screen');
 const settingsBtn = document.getElementById('settings-btn');
 const settingsClose = document.getElementById('settings-close');
@@ -1638,40 +1450,12 @@ const settingsClose = document.getElementById('settings-close');
 function syncSettingsUI() {
   document.getElementById('setting-shadows').checked = currentSettings.shadows;
   document.getElementById('setting-fog').checked = currentSettings.fog;
-  document.getElementById('setting-tonemapping').checked = currentSettings.tonemapping;
-  settingsScreen.querySelectorAll('[data-setting="resolution"] button').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.value === String(currentSettings.resolution));
-  });
-  settingsScreen.querySelectorAll('[data-setting="pixelate"] button').forEach(btn => {
-    btn.classList.toggle('active', parseInt(btn.dataset.value) === (currentSettings.pixelate || 0));
-  });
 }
 
-settingsBtn.addEventListener('click', () => {
-  syncSettingsUI();
-  settingsScreen.classList.remove('hidden');
-});
+settingsBtn.addEventListener('click', () => { syncSettingsUI(); settingsScreen.classList.remove('hidden'); });
 settingsClose.addEventListener('click', () => settingsScreen.classList.add('hidden'));
 
-settingsScreen.querySelectorAll('[data-setting="resolution"] button').forEach(btn => {
-  btn.addEventListener('click', () => {
-    currentSettings.resolution = btn.dataset.value;
-    applySettings(currentSettings);
-    saveSettings(currentSettings);
-    syncSettingsUI();
-  });
-});
-
-settingsScreen.querySelectorAll('[data-setting="pixelate"] button').forEach(btn => {
-  btn.addEventListener('click', () => {
-    currentSettings.pixelate = parseInt(btn.dataset.value);
-    applySettings(currentSettings);
-    saveSettings(currentSettings);
-    syncSettingsUI();
-  });
-});
-
-['shadows', 'fog', 'tonemapping'].forEach(key => {
+['shadows', 'fog'].forEach(key => {
   document.getElementById(`setting-${key}`).addEventListener('change', (e) => {
     currentSettings[key] = e.target.checked;
     applySettings(currentSettings);
@@ -1679,18 +1463,13 @@ settingsScreen.querySelectorAll('[data-setting="pixelate"] button').forEach(btn 
   });
 });
 
-// ── Level complete: press Space to advance ──
+// ── Level complete ──
 function advanceLevel() {
   if (levelFalling) return;
   levelCompleteEl.classList.add('hidden');
   audio.stopMusic();
-  if (currentLevel < TOTAL_LEVELS) {
-    currentLevel++;
-    startLevel();
-  } else {
-    currentLevel = 1;
-    startLevel();
-  }
+  currentLevel = currentLevel < TOTAL_LEVELS ? currentLevel + 1 : 1;
+  startLevel();
 }
 window.addEventListener('keydown', (e) => {
   if (e.key === ' ' && levelComplete && !levelCompleteEl.classList.contains('hidden')) {
@@ -1700,38 +1479,26 @@ window.addEventListener('keydown', (e) => {
 });
 levelCompleteEl.addEventListener('click', advanceLevel);
 
-// ── Arrow keys: orbit camera ──
+// ── Camera orbit keys ──
 const _cameraKeys = new Set();
-const CAMERA_ORBIT_SPEED = 0.03;
-const CAMERA_ZOOM_SPEED = 0.5;
-
 window.addEventListener('keydown', (e) => {
   if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
     _cameraKeys.add(e.key);
     e.preventDefault();
   }
 });
-window.addEventListener('keyup', (e) => {
-  _cameraKeys.delete(e.key);
-});
+window.addEventListener('keyup', (e) => _cameraKeys.delete(e.key));
 
 function updateCameraKeys() {
   if (_cameraKeys.size === 0) return;
-  // Get spherical coords relative to target
-  const offset = camera.position.clone().sub(controls.target);
-  const spherical = new THREE.Spherical().setFromVector3(offset);
-
-  if (_cameraKeys.has('ArrowLeft')) spherical.theta -= CAMERA_ORBIT_SPEED;
-  if (_cameraKeys.has('ArrowRight')) spherical.theta += CAMERA_ORBIT_SPEED;
-  if (_cameraKeys.has('ArrowUp')) spherical.phi = Math.max(0.1, spherical.phi - CAMERA_ORBIT_SPEED);
-  if (_cameraKeys.has('ArrowDown')) spherical.phi = Math.min(controls.maxPolarAngle, spherical.phi + CAMERA_ORBIT_SPEED);
-
-  offset.setFromSpherical(spherical);
-  camera.position.copy(controls.target).add(offset);
-  camera.lookAt(controls.target);
+  const speed = 0.03;
+  if (_cameraKeys.has('ArrowLeft')) camera.alpha -= speed;
+  if (_cameraKeys.has('ArrowRight')) camera.alpha += speed;
+  if (_cameraKeys.has('ArrowUp')) camera.beta = Math.max(0.1, camera.beta - speed);
+  if (_cameraKeys.has('ArrowDown')) camera.beta = Math.min(camera.upperBetaLimit, camera.beta + speed);
 }
 
-// ── Pause handler ──
+// ── Pause ──
 window.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && !settingsScreen.classList.contains('hidden')) {
     settingsScreen.classList.add('hidden');
@@ -1740,68 +1507,40 @@ window.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && gameStarted) {
     paused = !paused;
     pauseScreen.classList.toggle('hidden', !paused);
-    if (paused) {
-      audio.stopMusic();
-    } else {
-      audio.startMusic(currentLevel);
-    }
+    if (paused) audio.stopMusic();
+    else audio.startMusic(currentLevel);
   }
 });
 
-// ── Global Shift+WASD/QE/Space handler (works even without input focus) ──
+// ── Global shift nav ──
 window.addEventListener('keydown', (e) => {
   if (!e.shiftKey || levelComplete || paused || _placementQueue) return;
   const key = e.key.toUpperCase();
   if ('WASDEQ '.includes(key) || key === ' ') {
-    if (_handleNavKey(key === ' ' ? ' ' : key)) {
-      e.preventDefault();
-    }
+    if (_handleNavKey(key === ' ' ? ' ' : key)) e.preventDefault();
   }
 });
 
-// ── Helper: get world position of a cube (accounting for group transform) ──
-function cubeWorldPos(c) {
-  const local = new THREE.Vector3(c.gx, 0.5 + (c.gy || 0), c.gz);
-  local.applyQuaternion(structureGroup.quaternion);
-  local.add(structureGroup.position);
-  return local;
-}
+// ── Game loop updates ──
+function updatePhysics() {
+  if (levelComplete) return;
 
-
-// ── Physics update ──
-let _physFrameCount = 0;
-function updatePhysics(dt) {
-  if (levelComplete || !physics.hasStructureBody()) return;
-
-  physics.step(dt);
-  syncGroupFromBody();
-  _physFrameCount++;
-
-  // Log structure group position every 2 seconds
-  if (_physFrameCount % 120 === 1) {
-    const sp = structureGroup.position;
-    console.log('[GAME] frame', _physFrameCount, '| structureGroup pos=', `(${sp.x.toFixed(2)}, ${sp.y.toFixed(2)}, ${sp.z.toFixed(2)})`, '| cubes=', cubes.length, '| queue=', !!_placementQueue);
+  // Update highlight position
+  if (selectedHighlight && selectedCube) {
+    selectedHighlight.position.copyFrom(selectedCube.mesh.position);
   }
 
-  // Sync debris pieces
-  for (const d of debrisPieces) {
-    const dt = physics.getDebrisTransform(d.physicsId);
-    if (!dt) continue;
-    d.group.position.set(dt.position.x, dt.position.y, dt.position.z);
-    d.group.quaternion.set(dt.rotation.x, dt.rotation.y, dt.rotation.z, dt.rotation.w);
-  }
-
-  // ── Fell off edge ──
+  // Fell off edge
   const floorEdge = 20;
   let onPlatform = false;
   for (const c of cubes) {
-    const wp = cubeWorldPos(c);
+    const wp = c.mesh.position;
     if (Math.abs(wp.x) < floorEdge && Math.abs(wp.z) < floorEdge) { onPlatform = true; break; }
   }
-  if (!onPlatform) {
+  if (!onPlatform && cubes.length > 0) {
     levelFalling = true;
-    const sPos = physics.getStructurePosition();
-    if (sPos.y < -5) {
+    const firstCube = cubes[0];
+    if (firstCube.mesh.position.y < -5) {
       showMessage('Fell off! Restarting...', '#ff6b6b');
       levelComplete = true;
       setTimeout(() => startLevel(), 1000);
@@ -1812,26 +1551,28 @@ function updatePhysics(dt) {
 
   // Clean up debris that fell too far
   for (let i = debrisPieces.length - 1; i >= 0; i--) {
-    const dt = physics.getDebrisTransform(debrisPieces[i].physicsId);
-    if (!dt || dt.position.y < -20) {
-      scene.remove(debrisPieces[i].group);
-      physics.removeDebris(debrisPieces[i].physicsId);
+    const d = debrisPieces[i];
+    if (d.cube && d.cube.mesh && d.cube.mesh.position.y < -20) {
+      if (d.cube.aggregate) d.cube.aggregate.dispose();
+      if (d.cube.mesh) d.cube.mesh.dispose();
       debrisPieces.splice(i, 1);
     }
   }
 
-  // ── Win check ──
+  // Win check
   if (endZoneBox) {
     for (const c of cubes) {
-      const wp = cubeWorldPos(c);
-      if (endZoneBox.containsPoint(wp)) {
+      const wp = c.mesh.position;
+      if (wp.x >= endZoneBox.minimum.x && wp.x <= endZoneBox.maximum.x &&
+          wp.y >= endZoneBox.minimum.y && wp.y <= endZoneBox.maximum.y &&
+          wp.z >= endZoneBox.minimum.z && wp.z <= endZoneBox.maximum.z) {
         levelComplete = true;
         unlockNextLevel(currentLevel);
-        levelCompleteEl.querySelector('h1').textContent = 'Level Complete!';
         const isLast = currentLevel >= TOTAL_LEVELS;
+        levelCompleteEl.querySelector('h1').textContent = 'Level Complete!';
         levelCompleteEl.querySelector('p').textContent = isLast
           ? `All ${TOTAL_LEVELS} levels done! Letters used: ${lettersUsed}`
-          : `Letters used: ${lettersUsed} — press SPACE to continue`;
+          : `Letters used: ${lettersUsed} -- press SPACE to continue`;
         levelCompleteEl.classList.remove('hidden');
         audio.levelComplete();
         return;
@@ -1840,91 +1581,44 @@ function updatePhysics(dt) {
   }
 }
 
-// ── Animate end zone pulse ──
 function animateEndZone(time) {
-  if (endZone) {
-    const pulse = 0.45 + Math.sin(time * 3) * 0.15;
-    endZone.material.opacity = pulse;
+  if (endZone && endZone.material) {
+    endZone.material.alpha = 0.45 + Math.sin(time * 3) * 0.15;
   }
 }
 
-// ── Camera follows selected cube or structure center ──
 function updateCamera() {
   let target;
   if (selectedCube) {
-    target = cubeWorldPos(selectedCube);
+    target = selectedCube.mesh.position;
+  } else if (cubes.length > 0) {
+    target = cubes[0].mesh.position;
   } else {
-    target = structureGroup.position.clone();
+    return;
   }
-  controls.target.lerp(target, 0.06);
+  camera.target = BABYLON.Vector3.Lerp(camera.target, target, 0.06);
 }
 
-// ── Main loop ──
-const clock = new THREE.Clock();
-function animate() {
-  requestAnimationFrame(animate);
-  const rawDt = clock.getDelta();
-  const dt = paused ? 0 : Math.min(rawDt, 0.05);
-  const time = clock.elapsedTime;
-
-  if (!paused) {
-    updateAnimations();
-    updateFlyingLetter(dt);
-    updateLetterZones();
-    updateDirectionArrow();
-    audio.setMusicIntensity(cubes.length);
-    updateExplosion(dt);
-    updatePhysics(dt);
-    updateCamera();
-    updateCameraKeys();
-    animateEndZone(time);
-  }
-  controls.update();
-  const _pixDiv = _getPixelDivisor(currentSettings);
-  if (_pixDiv > 0) {
-    const rt = _ensurePixelRT(_pixDiv);
-    renderer.setRenderTarget(rt);
-    renderer.render(scene, camera);
-    renderer.setRenderTarget(null);
-    _blitMat.map = rt.texture;
-    renderer.render(_blitScene, _blitCam);
-  } else {
-    renderer.render(scene, camera);
-  }
-}
-
-// ── Resize ──
-window.addEventListener('resize', () => {
-  camera.aspect = window.innerWidth / window.innerHeight;
-  camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
-  if (_pixelRT) { _pixelRT.dispose(); _pixelRT = null; }
-});
-
-// ── Intro screen loading progress ──
+// ── Intro screen ──
 const startPromptEl = document.getElementById('intro-start');
 const introLoaderBar = document.getElementById('intro-loader-bar');
 const introLoaderText = document.getElementById('intro-loader-text');
 const introLoader = document.getElementById('intro-loader');
 
-// Animate a fake progress bar that fills up over ~3s, then snaps to done
 let _fakeProgress = 0;
 (function pollProgress() {
   if (isLoadDone()) {
     introLoaderBar.style.setProperty('--progress', '100%');
-    introLoaderText.textContent = loadFailed()
-      ? 'Playing without dictionary'
-      : 'Dictionary ready!';
+    introLoaderText.textContent = loadFailed() ? 'Playing without dictionary' : 'Dictionary ready!';
     setTimeout(() => {
       introLoader.style.opacity = '0.4';
       startPromptEl.classList.remove('hidden');
     }, 300);
     return;
   }
-  // Ease toward 90% while waiting, never quite reaching it
   _fakeProgress += (0.9 - _fakeProgress) * 0.04;
   introLoaderBar.style.setProperty('--progress', Math.round(_fakeProgress * 100) + '%');
-  introLoaderText.textContent = `Loading dictionary...`;
+  introLoaderText.textContent = 'Loading dictionary...';
   setTimeout(pollProgress, 80);
 })();
 
@@ -1933,13 +1627,17 @@ function tryStartTitleMusic() {
   if (audioStarted) return;
   audioStarted = true;
   audio.init();
-  audio.startMusic(0); // level 0 = title screen key
+  audio.startMusic(0);
 }
 
 async function beginGame() {
   if (gameStarted) return;
   tryStartTitleMusic();
   if (!isLoadDone()) return;
+
+  // Init physics first
+  await initPhysics();
+
   gameStarted = true;
   introScreen.classList.add('hidden');
   currentLevel = 1;
@@ -1951,5 +1649,29 @@ window.addEventListener('keydown', () => {
   if (!gameStarted) beginGame();
 });
 
-// ── Start ──
-animate();
+// ── Main render loop ──
+let _lastTime = 0;
+scene.registerBeforeRender(() => {
+  const time = performance.now() / 1000;
+  const dt = Math.min(time - _lastTime, 0.05);
+  _lastTime = time;
+
+  if (paused) return;
+
+  updateFlyingLetter(dt);
+  updateLetterZones();
+  updateDirectionArrow();
+  audio.setMusicIntensity(cubes.length);
+  updatePhysics();
+  updateCamera();
+  updateCameraKeys();
+  animateEndZone(time);
+});
+
+// ── Resize ──
+window.addEventListener('resize', () => engine.resize());
+
+// ── Start engine ──
+engine.runRenderLoop(() => scene.render());
+
+console.log('[DANDLE]', VERSION, 'engine started');

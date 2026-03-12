@@ -91,7 +91,7 @@ camera.panningSensibility = 0; // disable panning
 
 // Lights
 const ambient = new BABYLON.HemisphericLight('ambient', new BABYLON.Vector3(0, 1, 0), scene);
-ambient.intensity = 0.5;
+ambient.intensity = 0.7;
 const sun = new BABYLON.DirectionalLight('sun', new BABYLON.Vector3(-0.5, -1, -0.3), scene);
 sun.intensity = 1.2;
 sun.position = new BABYLON.Vector3(8, 15, 10);
@@ -186,6 +186,13 @@ let _ghostMeshes = [];
 // ── Explosion ──
 const explosionPieces = [];
 
+// ── Make materials matte by default ──
+function _matte(mat) {
+  mat.specularColor = new BABYLON.Color3(0.05, 0.05, 0.05);
+  mat.specularPower = 4;
+  return mat;
+}
+
 // ── Letter mesh creation (canvas texture on box) ──
 function _makeCanvasTex(letter, bgColor, borderColor, textColor) {
   const c = document.createElement('canvas');
@@ -209,6 +216,7 @@ function makeLetterMaterial(letter, bgColor, borderColor, textColor) {
   const dataUrl = _makeCanvasTex(letter, bgColor, borderColor, textColor);
   const tex = new BABYLON.Texture(dataUrl, scene, false, true);
   mat.diffuseTexture = tex;
+  _matte(mat);
   return mat;
 }
 
@@ -277,9 +285,9 @@ function buildFloor(tiles) {
     }
 
     // Two materials for checkerboard
-    const greenMat = new BABYLON.StandardMaterial('floorGreen_' + yLevel, scene);
+    const greenMat = _matte(new BABYLON.StandardMaterial('floorGreen_' + yLevel, scene));
     greenMat.diffuseColor = new BABYLON.Color3(0.416, 0.678, 0.478);
-    const beigeMat = new BABYLON.StandardMaterial('floorBeige_' + yLevel, scene);
+    const beigeMat = _matte(new BABYLON.StandardMaterial('floorBeige_' + yLevel, scene));
     beigeMat.diffuseColor = new BABYLON.Color3(0.925, 0.878, 0.753);
 
     // Template boxes for each color (instances share parent material)
@@ -435,7 +443,21 @@ function updateFlyingLetter(dt) {
   const arrived = dist < 0.3 || flyAge > 2.0;
 
   if (arrived) {
-    // Snap mesh to target
+    // Find a neighbor's velocity to match before connecting
+    let matchVel = new BABYLON.Vector3(0, 0, 0);
+    let matchAngVel = new BABYLON.Vector3(0, 0, 0);
+    const gx = fl.cube.gx, gy = fl.cube.gy || 0, gz = fl.cube.gz;
+    for (const other of cubes) {
+      if (other === fl.cube || !other.aggregate || !other.aggregate.body) continue;
+      const ox = other.gx, oy = other.gy || 0, oz = other.gz;
+      if (Math.abs(gx - ox) + Math.abs(gy - oy) + Math.abs(gz - oz) === 1) {
+        matchVel = other.aggregate.body.getLinearVelocity();
+        matchAngVel = other.aggregate.body.getAngularVelocity();
+        break;
+      }
+    }
+
+    // Dispose flying aggregate
     if (fl.aggregate) {
       fl.aggregate.dispose();
       fl.cube.aggregate = null;
@@ -443,7 +465,7 @@ function updateFlyingLetter(dt) {
 
     fl.cube.mesh.position.set(target.x, target.y, target.z);
 
-    // Create proper structure aggregate at exact position
+    // Create structure aggregate at exact position
     fl.cube.aggregate = new BABYLON.PhysicsAggregate(fl.cube.mesh, BABYLON.PhysicsShapeType.BOX, {
       mass: 1,
       friction: STRUCT_FRICTION,
@@ -453,6 +475,10 @@ function updateFlyingLetter(dt) {
     fl.cube.aggregate.body.setAngularDamping(0.15);
     setCollisionFiltering(fl.cube.aggregate, CG_STRUCTURE, CG_GROUND | CG_STRUCTURE | CG_FLYING | CG_DEBRIS);
 
+    // Match velocity of neighbors BEFORE connecting constraints
+    fl.cube.aggregate.body.setLinearVelocity(matchVel);
+    fl.cube.aggregate.body.setAngularVelocity(matchAngVel);
+
     connectCubeToNeighbors(fl.cube);
 
     _flyingLetter = null;
@@ -460,7 +486,6 @@ function updateFlyingLetter(dt) {
 
     if (_placementQueue) {
       _placementQueue.index++;
-      // Small delay between letters so they don't all spawn on top of each other
       setTimeout(() => _placeNextLetter(), 150);
     }
     return;
@@ -692,7 +717,7 @@ function createEndZone(x, z, w, d, y = 0) {
 // ── Walls ──
 function addWall(x, z, w, h, d) {
   const wall = BABYLON.MeshBuilder.CreateBox('wall', { width: w, height: h, depth: d }, scene);
-  const mat = new BABYLON.StandardMaterial('wallMat', scene);
+  const mat = _matte(new BABYLON.StandardMaterial('wallMat', scene));
   mat.diffuseColor = new BABYLON.Color3(0.4, 0.4, 0.5);
   wall.material = mat;
   wall.position.set(x, h / 2, z);
@@ -727,9 +752,8 @@ function addZipLine(x1, y1, z1, x2, y2, z2, radius = 0.3) {
     tessellation: 12,
   }, scene);
 
-  const mat = new BABYLON.StandardMaterial('zipMat', scene);
+  const mat = _matte(new BABYLON.StandardMaterial('zipMat', scene));
   mat.diffuseColor = new BABYLON.Color3(0.53, 0.53, 0.6);
-  mat.specularPower = 64;
   pole.material = mat;
   pole.position.copyFrom(mid);
 

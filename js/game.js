@@ -1,7 +1,7 @@
 import { getRandomWord, isValidWord, getWordTypes, isVerb, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v5.2.6';
+const VERSION = 'v5.2.7';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -180,8 +180,6 @@ const animations = [];
 const BLOCK_ANIM_DURATION = 0.35;
 
 let _placementQueue = null;
-let _liftAnim = null; // { cubes: [...], offsetY, startTime }
-
 // ── Ghost preview ──
 let _ghostMeshes = [];
 
@@ -525,7 +523,15 @@ function _placeNextLetter() {
     }
     q.startGy += 1;
 
-    // No animation — instant lift (physics already moved, mesh matches)
+    // Squash-and-stretch bounce on each lifted cube
+    for (const entry of liftCubes) {
+      animations.push({
+        cube: entry.cube,
+        startTime: performance.now() / 1000,
+        duration: 0.2,
+        type: 'bounce',
+      });
+    }
   }
 
   const cube = createStructureCube(l.letter, l.gx, l.gy, l.gz, l.wordIdx);
@@ -1317,7 +1323,6 @@ function startLevel() {
   animations.length = 0;
   selectedCube = null;
   _placementQueue = null;
-  _liftAnim = null;
   clearGhosts();
   clearHighlight();
   removeDirectionArrow();
@@ -1731,27 +1736,24 @@ scene.registerBeforeRender(() => {
 
   if (paused) return;
 
-  // Scale-in animations
+  // Cube animations
   for (let i = animations.length - 1; i >= 0; i--) {
     const a = animations[i];
     const t = Math.min((time - a.startTime) / a.duration, 1);
-    const s = t * t * (3 - 2 * t); // smoothstep
-    a.cube.mesh.scaling.set(s, s, s);
-    if (t >= 1) animations.splice(i, 1);
-  }
-
-  // Lift animation — visually interpolate cubes from old Y to new Y
-  if (_liftAnim) {
-    const t = Math.min((time - _liftAnim.startTime) / _liftAnim.duration, 1);
-    const ease = t * t * (3 - 2 * t); // smoothstep
-    for (const entry of _liftAnim.cubes) {
-      const targetY = entry.startY + 1;
-      entry.cube.mesh.position.y = entry.startY + (targetY - entry.startY) * ease;
-      if (entry.cube.aggregate && entry.cube.aggregate.body) {
-        entry.cube.aggregate.body.disablePreStep = false;
-      }
+    if (a.type === 'bounce') {
+      // Squash then stretch then settle: sin curve that overshoots
+      const bounce = 1 + Math.sin(t * Math.PI) * 0.25 * (1 - t);
+      const squash = 1 / Math.sqrt(bounce); // conserve volume
+      a.cube.mesh.scaling.set(squash, bounce, squash);
+    } else {
+      // Scale-in (default)
+      const s = t * t * (3 - 2 * t); // smoothstep
+      a.cube.mesh.scaling.set(s, s, s);
     }
-    if (t >= 1) _liftAnim = null;
+    if (t >= 1) {
+      a.cube.mesh.scaling.set(1, 1, 1);
+      animations.splice(i, 1);
+    }
   }
 
   updateLetterZones();

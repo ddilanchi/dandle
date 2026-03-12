@@ -13,11 +13,11 @@ const SOLVER_ITERATIONS = 8;
 const CUBE_HALF = 0.5;
 
 // Structure body
-const STRUCT_FRICTION = 0.1;
+const STRUCT_FRICTION = 0.02;
 const STRUCT_RESTITUTION = 0.02;
 const STRUCT_DENSITY = 1.0;
-const STRUCT_LINEAR_DAMPING = 0.15;
-const STRUCT_ANGULAR_DAMPING = 0.15;
+const STRUCT_LINEAR_DAMPING = 0.05;
+const STRUCT_ANGULAR_DAMPING = 0.05;
 
 // Static geometry
 const STATIC_FRICTION = 0.3;
@@ -245,6 +245,7 @@ export class Physics {
       const cd = this.RAPIER.ColliderDesc.cuboid(CUBE_HALF, CUBE_HALF, CUBE_HALF)
         .setTranslation(lx, ly, lz)
         .setFriction(STRUCT_FRICTION)
+        .setFrictionCombineRule(this.RAPIER.CoefficientCombineRule.Min)
         .setRestitution(STRUCT_RESTITUTION)
         .setDensity(STRUCT_DENSITY)
         .setCollisionGroups(GROUPS_STRUCTURE);
@@ -291,6 +292,7 @@ export class Physics {
     const cd = this.RAPIER.ColliderDesc.cuboid(CUBE_HALF, CUBE_HALF, CUBE_HALF)
       .setTranslation(localOffset.x, localOffset.y, localOffset.z)
       .setFriction(STRUCT_FRICTION)
+      .setFrictionCombineRule(this.RAPIER.CoefficientCombineRule.Min)
       .setRestitution(STRUCT_RESTITUTION)
       .setDensity(STRUCT_DENSITY)
       .setCollisionGroups(GROUPS_STRUCTURE);

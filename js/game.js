@@ -1,7 +1,7 @@
 import { getRandomWord, isValidWord, getWordTypes, isVerb, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v5.0.9';
+const VERSION = 'v5.1.0';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -538,6 +538,8 @@ function _placeNextLetter() {
 // ── Place a word ──
 function placeWord(text, startGx, startGz, dir, wordIdx, animated = false, startGy = 0) {
   const dirVec = dirToVec(dir);
+
+  // Calculate raw positions
   const allPositions = [];
   for (let i = 0; i < text.length; i++) {
     allPositions.push({
@@ -547,14 +549,47 @@ function placeWord(text, startGx, startGz, dir, wordIdx, animated = false, start
     });
   }
 
+  // Check if any new cube would go underground (gy < 0)
+  // If so, shift the ENTIRE structure up and adjust positions
+  let minGy = Infinity;
+  for (const p of allPositions) {
+    if (!cubes.find(c => c.gx === p.gx && (c.gy || 0) === p.gy && c.gz === p.gz)) {
+      minGy = Math.min(minGy, p.gy);
+    }
+  }
+  if (minGy < 0) {
+    const lift = -minGy; // how much to shift everything up
+    // Shift all existing cubes up in grid space
+    for (const c of cubes) {
+      c.gy = (c.gy || 0) + lift;
+      // Move the actual mesh/physics body up
+      const pos = c.mesh.position;
+      c.mesh.position.set(pos.x, pos.y + lift, pos.z);
+      if (c.aggregate && c.aggregate.body) {
+        c.aggregate.body.disablePreStep = false; // let Babylon sync the new position
+      }
+    }
+    // Also shift word positions and the new word's positions
+    for (const w of words) {
+      if (w.positions) {
+        for (const p of w.positions) p.gy = (p.gy || 0) + lift;
+      }
+    }
+    for (const p of allPositions) {
+      p.gy += lift;
+    }
+    startGy += lift;
+    // Update selected cube's gy reference if needed
+  }
+
   const wordEntry = { text, dir, positions: allPositions, _deleted: false };
   words.push(wordEntry);
 
   const letters = [];
   for (let i = 0; i < text.length; i++) {
-    const gx = startGx + dirVec.x * i;
-    const gy = startGy + (dirVec.y || 0) * i;
-    const gz = startGz + dirVec.z * i;
+    const gx = allPositions[i].gx;
+    const gy = allPositions[i].gy;
+    const gz = allPositions[i].gz;
     const existing = cubes.find(c => c.gx === gx && (c.gy || 0) === gy && c.gz === gz);
     if (existing) continue;
     letters.push({ letter: text[i], gx, gy, gz, wordIdx });

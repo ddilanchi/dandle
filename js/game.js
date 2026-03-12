@@ -1,7 +1,7 @@
 import { getRandomWord, isValidWord, getWordTypes, isVerb, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v5.0.1';
+const VERSION = 'v5.0.2';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -382,6 +382,7 @@ function connectCubeToNeighbors(cube) {
     cube.constraints.push({ constraint, otherCube: other });
     if (!other.constraints) other.constraints = [];
     other.constraints.push({ constraint, otherCube: cube });
+    console.log(`[CONSTRAINT] "${cube.letter}"(${gx},${gy},${gz}) <-> "${other.letter}"(${ox},${oy},${oz}) pivotA=${_v3str(pivotA)} pivotB=${_v3str(pivotB)}`);
   }
 }
 
@@ -426,6 +427,12 @@ function createStructureCube(letter, gx, gy, gz, wordIdx) {
 }
 
 // ── Flying letter system ──
+let _flyFrameCount = 0;
+
+function _v3str(v) {
+  return `(${v.x.toFixed(2)}, ${v.y.toFixed(2)}, ${v.z.toFixed(2)})`;
+}
+
 function updateFlyingLetter(dt) {
   if (!_flyingLetter) return;
   const fl = _flyingLetter;
@@ -437,15 +444,26 @@ function updateFlyingLetter(dt) {
   const dz = target.z - pos.z;
   const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
 
-  // Check time limit — if letter has been flying too long, force-snap it
   if (!fl.startTime) fl.startTime = performance.now() / 1000;
   const flyAge = (performance.now() / 1000) - fl.startTime;
+
+  _flyFrameCount++;
+  // Log every 30 frames while flying
+  if (_flyFrameCount % 30 === 0) {
+    const vel = fl.aggregate?.body ? fl.aggregate.body.getLinearVelocity() : {x:0,y:0,z:0};
+    console.log(`[FLY] "${fl.cube.letter}" frame=${_flyFrameCount} pos=${_v3str(pos)} target=${_v3str(target)} dist=${dist.toFixed(2)} age=${flyAge.toFixed(1)}s vel=${_v3str(vel)}`);
+  }
+
   const arrived = dist < 0.3 || flyAge > 2.0;
 
   if (arrived) {
+    const reason = dist < 0.3 ? `close (dist=${dist.toFixed(3)})` : `timeout (age=${flyAge.toFixed(1)}s, dist=${dist.toFixed(2)})`;
+    console.log(`[FLY] "${fl.cube.letter}" ARRIVED: ${reason} | finalPos=${_v3str(pos)} target=${_v3str(target)}`);
+
     // Find a neighbor's velocity to match before connecting
     let matchVel = new BABYLON.Vector3(0, 0, 0);
     let matchAngVel = new BABYLON.Vector3(0, 0, 0);
+    let matchNeighbor = null;
     const gx = fl.cube.gx, gy = fl.cube.gy || 0, gz = fl.cube.gz;
     for (const other of cubes) {
       if (other === fl.cube || !other.aggregate || !other.aggregate.body) continue;
@@ -453,8 +471,19 @@ function updateFlyingLetter(dt) {
       if (Math.abs(gx - ox) + Math.abs(gy - oy) + Math.abs(gz - oz) === 1) {
         matchVel = other.aggregate.body.getLinearVelocity();
         matchAngVel = other.aggregate.body.getAngularVelocity();
+        matchNeighbor = other;
         break;
       }
+    }
+    console.log(`[FLY] "${fl.cube.letter}" matchVel from neighbor "${matchNeighbor?.letter || 'NONE'}" = linVel=${_v3str(matchVel)} angVel=${_v3str(matchAngVel)}`);
+
+    // Log ALL cube positions + velocities before snapping
+    console.log(`[FLY] --- BEFORE SNAP: ${cubes.length} cubes ---`);
+    for (const c of cubes) {
+      if (!c.aggregate?.body) { console.log(`  [${c.letter}] grid=(${c.gx},${c.gy||0},${c.gz}) NO BODY`); continue; }
+      const cp = c.mesh.position;
+      const cv = c.aggregate.body.getLinearVelocity();
+      console.log(`  [${c.letter}] grid=(${c.gx},${c.gy||0},${c.gz}) pos=${_v3str(cp)} vel=${_v3str(cv)} constraints=${c.constraints?.length||0}`);
     }
 
     // Dispose flying aggregate
@@ -464,6 +493,7 @@ function updateFlyingLetter(dt) {
     }
 
     fl.cube.mesh.position.set(target.x, target.y, target.z);
+    console.log(`[FLY] "${fl.cube.letter}" snapped to ${_v3str(target)}`);
 
     // Create structure aggregate at exact position
     fl.cube.aggregate = new BABYLON.PhysicsAggregate(fl.cube.mesh, BABYLON.PhysicsShapeType.BOX, {
@@ -478,24 +508,39 @@ function updateFlyingLetter(dt) {
     // Match velocity of neighbors BEFORE connecting constraints
     fl.cube.aggregate.body.setLinearVelocity(matchVel);
     fl.cube.aggregate.body.setAngularVelocity(matchAngVel);
+    console.log(`[FLY] "${fl.cube.letter}" new body created, velocity set to ${_v3str(matchVel)}`);
 
     connectCubeToNeighbors(fl.cube);
+    console.log(`[FLY] "${fl.cube.letter}" connected ${fl.cube.constraints.length} constraints`);
+
+    // Log ALL cube positions + velocities AFTER connecting
+    console.log(`[FLY] --- AFTER CONNECT: ${cubes.length} cubes ---`);
+    for (const c of cubes) {
+      if (!c.aggregate?.body) { console.log(`  [${c.letter}] NO BODY`); continue; }
+      const cp = c.mesh.position;
+      const cv = c.aggregate.body.getLinearVelocity();
+      console.log(`  [${c.letter}] grid=(${c.gx},${c.gy||0},${c.gz}) pos=${_v3str(cp)} vel=${_v3str(cv)} constraints=${c.constraints?.length||0}`);
+    }
 
     _flyingLetter = null;
+    _flyFrameCount = 0;
     audio.pop(_placementQueue ? _placementQueue.index : 0);
 
     if (_placementQueue) {
       _placementQueue.index++;
+      console.log(`[FLY] advancing queue to index ${_placementQueue.index} / ${_placementQueue.letters.length}`);
       setTimeout(() => _placeNextLetter(), 150);
+    } else {
+      console.log(`[FLY] placement complete, no more letters`);
     }
     return;
   }
 
-  // Apply sustained force toward target — strong enough to push through structure
+  // Apply sustained force toward target
   if (fl.aggregate && fl.aggregate.body) {
     const forceMag = 80;
     const fx = (dx / dist) * forceMag;
-    const fy = (dy / dist) * forceMag + 10; // counteract gravity
+    const fy = (dy / dist) * forceMag + 10;
     const fz = (dz / dist) * forceMag;
     fl.aggregate.body.applyForce(
       new BABYLON.Vector3(fx, fy, fz),
@@ -555,6 +600,10 @@ function _placeNextLetter() {
   const fromY = 0.5 + l.gy - (q.dirVec.y || 0) * spawnDist;
   const fromZ = l.gz - q.dirVec.z * spawnDist;
 
+  const spawnPos = new BABYLON.Vector3(fromX, fromY, fromZ);
+  const targetPos = new BABYLON.Vector3(l.gx, 0.5 + l.gy, l.gz);
+  console.log(`[SPAWN] letter "${l.letter}" [${q.index}/${q.letters.length}] dir=${q.dirVec.x},${q.dirVec.y||0},${q.dirVec.z} spawn=${_v3str(spawnPos)} target=${_v3str(targetPos)} gridTarget=(${l.gx},${l.gy},${l.gz})`);
+
   mesh.position.set(fromX, fromY, fromZ);
 
   const cube = { letter: l.letter, gx: l.gx, gy: l.gy, gz: l.gz, mesh, wordIdx: l.wordIdx, aggregate: null, constraints: [] };
@@ -570,14 +619,14 @@ function _placeNextLetter() {
     restitution: 0.02,
   }, scene);
   aggregate.body.setLinearDamping(0.3);
-  aggregate.body.setAngularDamping(5); // High angular damping to prevent tumbling
+  aggregate.body.setAngularDamping(5);
 
   // Flying letters collide with structure and ground, but NOT other flying letters
   setCollisionFiltering(aggregate, CG_FLYING, CG_GROUND | CG_STRUCTURE);
+  console.log(`[SPAWN] "${l.letter}" physics body created, collision=FLYING->GROUND|STRUCTURE`);
 
   cube.aggregate = aggregate;
-
-  const targetPos = new BABYLON.Vector3(l.gx, 0.5 + l.gy, l.gz);
+  _flyFrameCount = 0;
   _flyingLetter = { cube, targetPos, aggregate };
 }
 
@@ -1555,8 +1604,25 @@ window.addEventListener('keydown', (e) => {
 });
 
 // ── Game loop updates ──
+let _physLogTimer = 0;
 function updatePhysics() {
   if (levelComplete) return;
+
+  // Log structure state every 2 seconds
+  _physLogTimer++;
+  if (_physLogTimer % 120 === 1 && cubes.length > 0) {
+    let maxVel = 0;
+    let maxVelCube = null;
+    for (const c of cubes) {
+      if (!c.aggregate?.body) continue;
+      const v = c.aggregate.body.getLinearVelocity();
+      const speed = Math.sqrt(v.x*v.x + v.y*v.y + v.z*v.z);
+      if (speed > maxVel) { maxVel = speed; maxVelCube = c; }
+    }
+    const first = cubes[0];
+    const fp = first.mesh.position;
+    console.log(`[PHYS] tick=${_physLogTimer} cubes=${cubes.length} first=[${first.letter}] pos=${_v3str(fp)} maxSpeed=${maxVel.toFixed(2)} (${maxVelCube?.letter}) flying=${!!_flyingLetter} queue=${!!_placementQueue}`);
+  }
 
   // Update highlight position
   if (selectedHighlight && selectedCube) {

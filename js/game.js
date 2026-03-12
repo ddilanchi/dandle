@@ -1,7 +1,7 @@
 import { getRandomWord, isValidWord, getWordTypes, isVerb, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v5.1.3';
+const VERSION = 'v5.1.4';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -541,13 +541,15 @@ function placeWord(text, startGx, startGz, dir, wordIdx, animated = false, start
     }
   }
   if (minGy < 0) {
-    const lift = -minGy; // how much to shift everything up
-    // Only shift grid coordinates — physical positions stay where they are.
-    // The lock constraints will enforce correct spacing, so the solver
-    // naturally pushes the old structure upward when new cubes are placed
-    // at ground level. No teleport, no impulse.
+    const lift = -minGy;
+    // Shift grid coords AND teleport physics bodies up
     for (const c of cubes) {
       c.gy = (c.gy || 0) + lift;
+      const pos = c.mesh.position;
+      c.mesh.position.set(pos.x, pos.y + lift, pos.z);
+      if (c.aggregate && c.aggregate.body) {
+        c.aggregate.body.disablePreStep = false;
+      }
     }
     for (const w of words) {
       if (w.positions) {

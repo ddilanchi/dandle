@@ -1,7 +1,7 @@
 import { getRandomWord, isValidWord, getWordTypes, isVerb, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v5.3.0';
+const VERSION = 'v5.3.1';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -116,8 +116,8 @@ function applySettings(s) {
   if (s.fog) {
     scene.fogMode = BABYLON.Scene.FOGMODE_LINEAR;
     scene.fogColor = new BABYLON.Color3(0.529, 0.808, 0.922);
-    scene.fogStart = 30;
-    scene.fogEnd = 60;
+    scene.fogStart = 50;
+    scene.fogEnd = 90;
   } else {
     scene.fogMode = BABYLON.Scene.FOGMODE_NONE;
   }
@@ -684,9 +684,9 @@ function updateGhostPreview() {
 // ── End zone ──
 function createEndZone(x, z, w, d, y = 0) {
   const mat = new BABYLON.StandardMaterial('endZoneMat', scene);
-  mat.diffuseColor = new BABYLON.Color3(1, 0.2, 0.2);
-  mat.emissiveColor = new BABYLON.Color3(1, 0.13, 0.13);
-  mat.alpha = 0.55;
+  mat.diffuseColor = new BABYLON.Color3(1, 0.15, 0.15);
+  mat.emissiveColor = new BABYLON.Color3(1, 0.3, 0.2);
+  mat.alpha = 0.7;
 
   endZone = BABYLON.MeshBuilder.CreateGround('endZone', { width: w, height: d }, scene);
   endZone.position.set(x, y + 0.01, z);
@@ -698,13 +698,25 @@ function createEndZone(x, z, w, d, y = 0) {
     new BABYLON.Vector3(x + w / 2, y + 2, z + d / 2)
   );
 
+  // Vertical beacon — tall glowing pillar visible from far away
+  const beaconH = 12;
+  const beacon = BABYLON.MeshBuilder.CreateBox('beacon', { width: 0.3, height: beaconH, depth: 0.3 }, scene);
+  const bMat = new BABYLON.StandardMaterial('beaconMat', scene);
+  bMat.diffuseColor = new BABYLON.Color3(1, 0.2, 0.2);
+  bMat.emissiveColor = new BABYLON.Color3(1, 0.4, 0.3);
+  bMat.alpha = 0.5;
+  beacon.material = bMat;
+  beacon.position.set(x, y + beaconH / 2, z);
+  beacon.isPickable = false;
+  levelObstacles.push(beacon);
+
   // Glowing pillar if elevated
   if (y > 0) {
     const pillar = BABYLON.MeshBuilder.CreateBox('pillar', { width: w, height: y, depth: d }, scene);
     const pMat = new BABYLON.StandardMaterial('pillarMat', scene);
     pMat.diffuseColor = new BABYLON.Color3(1, 0.2, 0.2);
-    pMat.emissiveColor = new BABYLON.Color3(1, 0.13, 0.13);
-    pMat.alpha = 0.25;
+    pMat.emissiveColor = new BABYLON.Color3(1, 0.2, 0.15);
+    pMat.alpha = 0.3;
     pillar.material = pMat;
     pillar.position.set(x, y / 2, z);
     pillar.isPickable = false;
@@ -1424,7 +1436,7 @@ function startLevel() {
       createEndZone(18, 0, 4, 4, 8);
       const zoneLetters = 'AEIORSTLN';
       for (let col = 0; col < 5; col++) {
-        const zx = 2 + col * 3;
+        const zx = 5 + col * 3;
         const type = col % 2 === 0 ? '-' : '+';
         const letter = zoneLetters[Math.floor(Math.random() * zoneLetters.length)];
         addLetterZone(zx, 0, 3, type, letter);
@@ -1673,7 +1685,9 @@ function updatePhysics() {
 
 function animateEndZone(time) {
   if (endZone && endZone.material) {
-    endZone.material.alpha = 0.45 + Math.sin(time * 3) * 0.15;
+    endZone.material.alpha = 0.55 + Math.sin(time * 3) * 0.2;
+    endZone.material.emissiveColor.r = 1;
+    endZone.material.emissiveColor.g = 0.2 + Math.sin(time * 2) * 0.1;
   }
 }
 

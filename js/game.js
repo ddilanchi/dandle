@@ -841,72 +841,91 @@ function clearHighlight() {
 }
 
 // ── Direction arrow ──
-let _arrowParts = []; // meshes for the direction arrow
+let _arrowShaft = null;
+let _arrowCone = null;
+let _arrowMat = null;
+let _arrowLastCube = null;
+let _arrowLastDir = null;
+
+function _ensureArrowMeshes() {
+  if (_arrowShaft) return;
+
+  _arrowMat = new BABYLON.StandardMaterial('arrowMat', scene);
+  _arrowMat.diffuseColor = new BABYLON.Color3(0.27, 0.53, 1);
+  _arrowMat.emissiveColor = new BABYLON.Color3(0.3, 0.5, 1);
+  _arrowMat.disableLighting = true;
+
+  _arrowShaft = BABYLON.MeshBuilder.CreateCylinder('arrowShaft', {
+    diameter: 0.1,
+    height: 1.5,
+    tessellation: 8,
+  }, scene);
+  _arrowShaft.material = _arrowMat;
+  _arrowShaft.isPickable = false;
+  _arrowShaft.renderingGroupId = 1; // render on top
+
+  _arrowCone = BABYLON.MeshBuilder.CreateCylinder('arrowCone', {
+    diameterTop: 0,
+    diameterBottom: 0.3,
+    height: 0.4,
+    tessellation: 8,
+  }, scene);
+  _arrowCone.material = _arrowMat;
+  _arrowCone.isPickable = false;
+  _arrowCone.renderingGroupId = 1;
+}
+
+function _positionArrow(origin, arrowDir) {
+  const shaftLen = 1.5;
+
+  // Shaft center
+  const shaftCenter = origin.add(arrowDir.scale(shaftLen / 2 + 0.55));
+  _arrowShaft.position.copyFrom(shaftCenter);
+
+  // Align cylinder (Y-up default) to arrowDir
+  const up = new BABYLON.Vector3(0, 1, 0);
+  const dot = BABYLON.Vector3.Dot(up, arrowDir);
+  if (Math.abs(dot) > 0.999) {
+    // Parallel to Y — use simple rotation
+    if (dot < 0) {
+      _arrowShaft.rotationQuaternion = BABYLON.Quaternion.RotationAxis(new BABYLON.Vector3(1, 0, 0), Math.PI);
+    } else {
+      _arrowShaft.rotationQuaternion = BABYLON.Quaternion.Identity();
+    }
+  } else {
+    const axis = BABYLON.Vector3.Cross(up, arrowDir).normalize();
+    const angle = Math.acos(dot);
+    _arrowShaft.rotationQuaternion = BABYLON.Quaternion.RotationAxis(axis, angle);
+  }
+
+  // Cone tip
+  const tipPos = origin.add(arrowDir.scale(shaftLen + 0.55 + 0.2));
+  _arrowCone.position.copyFrom(tipPos);
+  _arrowCone.rotationQuaternion = _arrowShaft.rotationQuaternion.clone();
+}
 
 function updateDirectionArrow() {
   if (!selectedCube) { removeDirectionArrow(); return; }
+
+  _ensureArrowMeshes();
+  _arrowShaft.setEnabled(true);
+  _arrowCone.setEnabled(true);
+
   const dv = dirToVec(currentDir);
   const arrowDir = new BABYLON.Vector3(dv.x, dv.y || 0, dv.z).normalize();
   const origin = cubeWorldPos(selectedCube);
 
-  removeDirectionArrow();
+  _positionArrow(origin, arrowDir);
+  directionArrow = _arrowShaft; // mark as active
 
-  const arrowMat = new BABYLON.StandardMaterial('arrowMat', scene);
-  arrowMat.diffuseColor = new BABYLON.Color3(0.27, 0.53, 1);
-  arrowMat.emissiveColor = new BABYLON.Color3(0.2, 0.4, 0.9);
-  arrowMat.disableLighting = true;
-
-  // Shaft: cylinder from origin to near the tip
-  const shaftLen = 1.5;
-  const shaft = BABYLON.MeshBuilder.CreateCylinder('arrowShaft', {
-    diameter: 0.08,
-    height: shaftLen,
-    tessellation: 8,
-  }, scene);
-  shaft.material = arrowMat;
-  shaft.isPickable = false;
-
-  // Position shaft center
-  const shaftCenter = origin.add(arrowDir.scale(shaftLen / 2 + 0.3));
-  shaft.position.copyFrom(shaftCenter);
-
-  // Align to direction
-  const up = new BABYLON.Vector3(0, 1, 0);
-  const angle = Math.acos(Math.max(-1, Math.min(1, BABYLON.Vector3.Dot(up, arrowDir))));
-  const axis = BABYLON.Vector3.Cross(up, arrowDir).normalize();
-  if (axis.length() > 0.001) {
-    shaft.rotationQuaternion = BABYLON.Quaternion.RotationAxis(axis, angle);
-  } else if (arrowDir.y < 0) {
-    shaft.rotationQuaternion = BABYLON.Quaternion.RotationAxis(new BABYLON.Vector3(1, 0, 0), Math.PI);
-  }
-
-  // Cone tip
-  const cone = BABYLON.MeshBuilder.CreateCylinder('arrowCone', {
-    diameterTop: 0,
-    diameterBottom: 0.25,
-    height: 0.35,
-    tessellation: 8,
-  }, scene);
-  cone.material = arrowMat;
-  cone.isPickable = false;
-  const tipPos = origin.add(arrowDir.scale(shaftLen + 0.3 + 0.175));
-  cone.position.copyFrom(tipPos);
-  if (shaft.rotationQuaternion) {
-    cone.rotationQuaternion = shaft.rotationQuaternion.clone();
-  }
-
-  _arrowParts = [shaft, cone];
-  directionArrow = shaft; // reference for existence check
-
-  // Update highlight position too
   if (selectedHighlight) {
     selectedHighlight.position.copyFrom(selectedCube.mesh.position);
   }
 }
 
 function removeDirectionArrow() {
-  for (const p of _arrowParts) p.dispose();
-  _arrowParts = [];
+  if (_arrowShaft) _arrowShaft.setEnabled(false);
+  if (_arrowCone) _arrowCone.setEnabled(false);
   directionArrow = null;
 }
 

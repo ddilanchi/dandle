@@ -1,7 +1,7 @@
 import { getRandomWord, isValidWord, getWordTypes, isVerb, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v5.2.3';
+const VERSION = 'v5.2.4';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -180,6 +180,7 @@ const animations = [];
 const BLOCK_ANIM_DURATION = 0.35;
 
 let _placementQueue = null;
+let _liftAnim = null; // { cubes: [...], offsetY, startTime }
 
 // ── Ghost preview ──
 let _ghostMeshes = [];
@@ -502,7 +503,10 @@ function _placeNextLetter() {
 
   // If this letter would go underground, lift everything up by 1
   if (l.gy < 0) {
-    // Shift all existing cubes up by 1
+    // Remember which cubes to animate and their current positions
+    const liftCubes = cubes.map(c => ({ cube: c, startY: c.mesh.position.y }));
+
+    // Shift grid coords and physics positions up by 1
     for (const c of cubes) {
       c.gy = (c.gy || 0) + 1;
       const pos = c.mesh.position;
@@ -511,17 +515,18 @@ function _placeNextLetter() {
         c.aggregate.body.disablePreStep = false;
       }
     }
-    // Shift all word positions
     for (const w of words) {
       if (w.positions) {
         for (const p of w.positions) p.gy = (p.gy || 0) + 1;
       }
     }
-    // Shift remaining letters in the queue
     for (const ll of q.letters) {
       ll.gy += 1;
     }
     q.startGy += 1;
+
+    // Set up visual interpolation — meshes start at old Y and lerp to new Y
+    _liftAnim = { cubes: liftCubes, startTime: performance.now() / 1000, duration: 0.2 };
   }
 
   const cube = createStructureCube(l.letter, l.gx, l.gy, l.gz, l.wordIdx);
@@ -1085,35 +1090,49 @@ function _getOpenFaces(cube) {
 function _handleNavKey(key) {
   if (!selectedCube) return false;
 
-  // Camera-relative navigation: snap camera forward to nearest grid axis,
-  // then derive right as the perpendicular axis (guarantees 4 distinct directions)
-  const camForward = camera.target.subtract(camera.position);
-  const fx = camForward.x, fz = camForward.z;
-  // Snap forward to nearest cardinal axis
-  let fwd;
-  if (Math.abs(fx) > Math.abs(fz)) {
-    fwd = { x: Math.sign(fx), y: 0, z: 0 };
-  } else {
-    fwd = { x: 0, y: 0, z: Math.sign(fz) };
-  }
-  // Right is always perpendicular (90° CW in XZ)
-  const right = { x: -fwd.z, y: 0, z: fwd.x };
+  // Camera-relative navigation using dot product — no grid snapping.
+  // Find the adjacent cube that best matches the desired screen direction.
+  const camFwd = camera.getDirection(BABYLON.Axis.Z);   // camera's forward in world
+  const camRight = camera.getDirection(BABYLON.Axis.X);  // camera's right in world
 
-  const moveMap = {
-    'W': fwd,
-    'S': { x: -fwd.x, y: 0, z: -fwd.z },
-    'A': { x: -right.x, y: 0, z: -right.z },
-    'D': right,
-    'Q': { x: 0, y: 1, z: 0 },
-    'E': { x: 0, y: -1, z: 0 },
+  // Desired direction in world XZ for each key
+  const dirMap = {
+    'W': { x: camFwd.x, z: camFwd.z },
+    'S': { x: -camFwd.x, z: -camFwd.z },
+    'A': { x: -camRight.x, z: -camRight.z },
+    'D': { x: camRight.x, z: camRight.z },
   };
 
-  if (moveMap[key]) {
-    const m = moveMap[key];
+  if (dirMap[key]) {
+    const dir = dirMap[key];
+    // Find best adjacent cube in the XZ plane matching this direction
+    let bestCube = null, bestDot = -Infinity;
+    for (const c of cubes) {
+      const dx = c.gx - selectedCube.gx;
+      const dy = (c.gy || 0) - (selectedCube.gy || 0);
+      const dz = c.gz - selectedCube.gz;
+      if (Math.abs(dx) + Math.abs(dy) + Math.abs(dz) !== 1) continue;
+      if (dy !== 0) continue; // Q/E handles vertical
+      const dot = dx * dir.x + dz * dir.z;
+      if (dot > bestDot) { bestDot = dot; bestCube = c; }
+    }
+    if (bestCube && bestDot > 0) {
+      selectedCube = bestCube;
+      highlightCube(bestCube);
+      selectedInfoEl.textContent = `Selected: [${bestCube.letter}] at (${bestCube.gx}, ${bestCube.gz})`;
+      audio.select();
+      updateGhostPreview();
+    }
+    return true;
+  }
+
+  // Q/E for vertical
+  const vertMap = { 'Q': 1, 'E': -1 };
+  if (vertMap[key] !== undefined) {
     const neighbor = cubes.find(c =>
-      c.gx === selectedCube.gx + m.x &&
-      (c.gy || 0) === (selectedCube.gy || 0) + m.y &&
-      c.gz === selectedCube.gz + m.z
+      c.gx === selectedCube.gx &&
+      (c.gy || 0) === (selectedCube.gy || 0) + vertMap[key] &&
+      c.gz === selectedCube.gz
     );
     if (neighbor) {
       selectedCube = neighbor;
@@ -1299,6 +1318,7 @@ function startLevel() {
   animations.length = 0;
   selectedCube = null;
   _placementQueue = null;
+  _liftAnim = null;
   clearGhosts();
   clearHighlight();
   removeDirectionArrow();
@@ -1719,6 +1739,20 @@ scene.registerBeforeRender(() => {
     const s = t * t * (3 - 2 * t); // smoothstep
     a.cube.mesh.scaling.set(s, s, s);
     if (t >= 1) animations.splice(i, 1);
+  }
+
+  // Lift animation — visually interpolate cubes from old Y to new Y
+  if (_liftAnim) {
+    const t = Math.min((time - _liftAnim.startTime) / _liftAnim.duration, 1);
+    const ease = t * t * (3 - 2 * t); // smoothstep
+    for (const entry of _liftAnim.cubes) {
+      const targetY = entry.startY + 1;
+      entry.cube.mesh.position.y = entry.startY + (targetY - entry.startY) * ease;
+      if (entry.cube.aggregate && entry.cube.aggregate.body) {
+        entry.cube.aggregate.body.disablePreStep = false;
+      }
+    }
+    if (t >= 1) _liftAnim = null;
   }
 
   updateLetterZones();

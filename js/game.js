@@ -1,7 +1,7 @@
 import { getRandomWord, isValidWord, getWordTypes, isVerb, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v5.0.5';
+const VERSION = 'v5.0.6';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -401,7 +401,29 @@ function disconnectCube(cube) {
 // ── Create a physics cube (structure member) ──
 function createStructureCube(letter, gx, gy, gz, wordIdx) {
   const mesh = makeLetterMesh(letter);
-  mesh.position.set(gx, 0.5 + gy, gz);
+
+  // Position relative to an existing neighbor's ACTUAL position (not grid),
+  // so the lock constraint doesn't have to snap a positional mismatch.
+  let placed = false;
+  for (const other of cubes) {
+    const ox = other.gx, oy = other.gy || 0, oz = other.gz;
+    const dx = Math.abs(gx - ox), dy = Math.abs((gy || 0) - oy), dz = Math.abs(gz - oz);
+    if (dx + dy + dz === 1) {
+      // Found a neighbor — offset from their actual position
+      const op = other.mesh.position;
+      mesh.position.set(
+        op.x + (gx - ox),
+        op.y + ((gy || 0) - oy),
+        op.z + (gz - oz)
+      );
+      placed = true;
+      break;
+    }
+  }
+  if (!placed) {
+    // No neighbor (first cube) — use grid position
+    mesh.position.set(gx, 0.5 + (gy || 0), gz);
+  }
 
   const aggregate = new BABYLON.PhysicsAggregate(mesh, BABYLON.PhysicsShapeType.BOX, {
     mass: 1,
@@ -412,6 +434,20 @@ function createStructureCube(letter, gx, gy, gz, wordIdx) {
   // Damping
   aggregate.body.setLinearDamping(0.15);
   aggregate.body.setAngularDamping(0.15);
+
+  // Copy neighbor velocity so constraint doesn't jerk
+  for (const other of cubes) {
+    if (!other.aggregate?.body) continue;
+    const ox = other.gx, oy = other.gy || 0, oz = other.gz;
+    const dx = Math.abs(gx - ox), dy = Math.abs((gy || 0) - oy), dz = Math.abs(gz - oz);
+    if (dx + dy + dz === 1) {
+      const lv = other.aggregate.body.getLinearVelocity();
+      const av = other.aggregate.body.getAngularVelocity();
+      aggregate.body.setLinearVelocity(lv);
+      aggregate.body.setAngularVelocity(av);
+      break;
+    }
+  }
 
   setCollisionFiltering(aggregate, CG_STRUCTURE, CG_GROUND | CG_STRUCTURE | CG_FLYING | CG_DEBRIS);
 
@@ -437,7 +473,7 @@ function _placeNextLetter() {
   if (q.index >= q.letters.length) {
     // All letters placed — apply push impulse in build direction
     // Each cube gets a fixed impulse (scales with word length, NOT divided by total cubes)
-    const perCubeImpulse = 5.0 * q.letters.length;
+    const perCubeImpulse = 3.0 * q.letters.length;
     const dv = q.dirVec;
 
     console.log(`[PLACE] all ${q.letters.length} letters placed, pushing dir=(${dv.x},${dv.y||0},${dv.z}) perCube=${perCubeImpulse} totalCubes=${cubes.length}`);

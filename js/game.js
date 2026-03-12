@@ -415,18 +415,6 @@ function createStructureCube(letter, gx, gy, gz, wordIdx) {
 
   setCollisionFiltering(aggregate, CG_STRUCTURE, CG_GROUND | CG_STRUCTURE | CG_FLYING | CG_DEBRIS);
 
-  // Match velocity of existing neighbors to avoid constraint jolt
-  const neighbor = cubes.find(c => {
-    const dx = Math.abs(c.gx - gx), dy = Math.abs((c.gy||0) - (gy||0)), dz = Math.abs(c.gz - gz);
-    return dx + dy + dz === 1 && c.aggregate?.body;
-  });
-  if (neighbor) {
-    const nv = neighbor.aggregate.body.getLinearVelocity();
-    const nav = neighbor.aggregate.body.getAngularVelocity();
-    aggregate.body.setLinearVelocity(nv);
-    aggregate.body.setAngularVelocity(nav);
-  }
-
   const cube = { letter, gx, gy: gy || 0, gz, mesh, wordIdx, aggregate, constraints: [] };
   mesh.metadata = { cube };
   cubes.push(cube);
@@ -448,28 +436,20 @@ function _placeNextLetter() {
 
   if (q.index >= q.letters.length) {
     // All letters placed — apply push impulse in build direction
-    // Horizontal push only (no vertical component) to avoid launching upward
-    const pushPerCube = 5.0;
+    // Each cube gets a fixed impulse (scales with word length, NOT divided by total cubes)
+    const perCubeImpulse = 2.0 * q.letters.length;
     const dv = q.dirVec;
-    const impulseDir = new BABYLON.Vector3(dv.x, 0, dv.z);
-    // Normalize horizontal direction (in case it was purely vertical)
-    const hLen = Math.sqrt(impulseDir.x * impulseDir.x + impulseDir.z * impulseDir.z);
-    if (hLen > 0.01) {
-      impulseDir.x /= hLen;
-      impulseDir.z /= hLen;
-    }
-    const totalPush = pushPerCube * q.letters.length;
 
-    console.log(`[PLACE] all ${q.letters.length} letters placed, pushing dir=(${impulseDir.x},0,${impulseDir.z}) total=${totalPush}`);
+    console.log(`[PLACE] all ${q.letters.length} letters placed, pushing dir=(${dv.x},${dv.y||0},${dv.z}) perCube=${perCubeImpulse} totalCubes=${cubes.length}`);
 
     for (const c of cubes) {
       if (c.aggregate && c.aggregate.body) {
         const impulse = new BABYLON.Vector3(
-          impulseDir.x * totalPush / cubes.length,
-          0,
-          impulseDir.z * totalPush / cubes.length
+          dv.x * perCubeImpulse,
+          (dv.y || 0) * perCubeImpulse,
+          dv.z * perCubeImpulse
         );
-        c.aggregate.body.applyImpulse(impulse, c.mesh.getAbsolutePosition());
+        c.aggregate.body.applyImpulse(impulse, c.mesh.position);
       }
     }
 

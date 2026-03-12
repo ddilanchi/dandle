@@ -1,7 +1,7 @@
 import { getRandomWord, isValidWord, getWordTypes, isVerb, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v5.3.2';
+const VERSION = 'v5.3.3';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -946,7 +946,12 @@ function updateDirectionArrow() {
   _arrowCone.setEnabled(true);
 
   const dv = dirToVec(currentDir);
-  const arrowDir = new BABYLON.Vector3(dv.x, dv.y || 0, dv.z).normalize();
+  const gridDir = new BABYLON.Vector3(dv.x, dv.y || 0, dv.z);
+  // Rotate arrow direction by the structure's rotation
+  const rot = selectedCube.mesh.rotationQuaternion || BABYLON.Quaternion.Identity();
+  const rotMatrix = new BABYLON.Matrix();
+  rot.toRotationMatrix(rotMatrix);
+  const arrowDir = BABYLON.Vector3.TransformCoordinates(gridDir, rotMatrix).normalize();
   const origin = cubeWorldPos(selectedCube);
 
   _positionArrow(origin, arrowDir);
@@ -1129,7 +1134,10 @@ function updateLetterZones() {
     const wordCubes = cubes.filter(c => c.wordIdx === wi);
     for (const c of wordCubes) {
       const wx = c.mesh.position.x;
+      const wy = c.mesh.position.y;
       const wz = c.mesh.position.z;
+      // Only trigger zones on surface contact (cube near ground level)
+      if (wy > 1.5) continue;
       const zone = getZoneAt(wx, wz);
       if (!zone) continue;
       const wordHasLetter = w.text.includes(zone.letter);

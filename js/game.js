@@ -1,7 +1,7 @@
 import { getRandomWord, isValidWord, getWordTypes, isVerb, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v5.0.6';
+const VERSION = 'v5.0.7';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -471,28 +471,12 @@ function _placeNextLetter() {
   const q = _placementQueue;
 
   if (q.index >= q.letters.length) {
-    // All letters placed — apply push impulse in build direction
-    // Each cube gets a fixed impulse (scales with word length, NOT divided by total cubes)
-    const perCubeImpulse = 3.0 * q.letters.length;
-    const dv = q.dirVec;
-
-    console.log(`[PLACE] all ${q.letters.length} letters placed, pushing dir=(${dv.x},${dv.y||0},${dv.z}) perCube=${perCubeImpulse} totalCubes=${cubes.length}`);
-
-    for (const c of cubes) {
-      if (c.aggregate && c.aggregate.body) {
-        const impulse = new BABYLON.Vector3(
-          dv.x * perCubeImpulse,
-          (dv.y || 0) * perCubeImpulse,
-          dv.z * perCubeImpulse
-        );
-        c.aggregate.body.applyImpulse(impulse, c.mesh.position);
-      }
-    }
-
+    // All letters placed — done
     _placementQueue = null;
     clearGhosts();
 
     // Select the last placed letter
+    const dv = q.dirVec;
     const lastIdx = q.text.length - 1;
     const lastGx = q.startGx + dv.x * lastIdx;
     const lastGy = q.startGy + (dv.y || 0) * lastIdx;
@@ -512,7 +496,7 @@ function _placeNextLetter() {
 
   // Place this letter instantly at its grid position
   const l = q.letters[q.index];
-  console.log(`[PLACE] letter "${l.letter}" [${q.index}/${q.letters.length}] at grid=(${l.gx},${l.gy},${l.gz}) world=(${l.gx}, ${0.5+l.gy}, ${l.gz})`);
+  const dv = q.dirVec;
 
   const cube = createStructureCube(l.letter, l.gx, l.gy, l.gz, l.wordIdx);
 
@@ -520,6 +504,20 @@ function _placeNextLetter() {
   cube.mesh.scaling.set(0.01, 0.01, 0.01);
   const anim = { cube, startTime: performance.now() / 1000, duration: 0.2 };
   animations.push(anim);
+
+  // Newton's 3rd law: each new letter pushes the structure in the OPPOSITE direction
+  // Like a leg pushing down against the ground launches you upward
+  const reactionStrength = 4.0;
+  for (const c of cubes) {
+    if (c.aggregate && c.aggregate.body) {
+      const impulse = new BABYLON.Vector3(
+        -dv.x * reactionStrength,
+        -(dv.y || 0) * reactionStrength,
+        -dv.z * reactionStrength
+      );
+      c.aggregate.body.applyImpulse(impulse, c.mesh.position);
+    }
+  }
 
   audio.pop(q.index);
 
@@ -530,7 +528,6 @@ function _placeNextLetter() {
   if (q.index < q.letters.length) {
     setTimeout(() => _placeNextLetter(), 120);
   } else {
-    // All done — apply impulse after last letter settles
     setTimeout(() => _placeNextLetter(), 120);
   }
 }

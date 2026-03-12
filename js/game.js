@@ -1,7 +1,7 @@
 import { getRandomWord, isValidWord, getWordTypes, isVerb, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v5.1.0';
+const VERSION = 'v5.1.1';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -485,9 +485,9 @@ function _placeNextLetter() {
     }
     _activePush = {
       dir: { x: -dv.x, y: -(dv.y || 0), z: -dv.z }, // opposite of build direction
-      strength: 15.0 * wordLen, // force per old cube per frame
+      strength: 5.0 * wordLen, // force per old cube per frame
       startTime: performance.now() / 1000,
-      duration: 0.4,
+      duration: 0.3,
       newCubeSet,
     };
 

@@ -7,7 +7,7 @@ import { Physics } from './physics.js';
 
 await RAPIER.init();
 
-const VERSION = 'v4.1.0';
+const VERSION = 'v4.1.1';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -1176,6 +1176,8 @@ function startLevel() {
   structureGroup.position.set(0, 0, 0);
   structureGroup.quaternion.identity();
   selectedCube = null;
+  _placementQueue = null;
+  _flyingLetter = null;
   _ghostMeshes = [];
   clearHighlight();
   removeDirectionArrow();

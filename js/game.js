@@ -1,7 +1,7 @@
 import { getRandomWord, isValidWord, getWordTypes, isVerb, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v5.0.4';
+const VERSION = 'v5.0.5';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -437,7 +437,7 @@ function _placeNextLetter() {
   if (q.index >= q.letters.length) {
     // All letters placed — apply push impulse in build direction
     // Each cube gets a fixed impulse (scales with word length, NOT divided by total cubes)
-    const perCubeImpulse = 2.0 * q.letters.length;
+    const perCubeImpulse = 5.0 * q.letters.length;
     const dv = q.dirVec;
 
     console.log(`[PLACE] all ${q.letters.length} letters placed, pushing dir=(${dv.x},${dv.y||0},${dv.z}) perCube=${perCubeImpulse} totalCubes=${cubes.length}`);

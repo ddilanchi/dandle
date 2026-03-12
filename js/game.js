@@ -1,7 +1,7 @@
 import { getRandomWord, isValidWord, getWordTypes, isVerb, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v5.1.5';
+const VERSION = 'v5.1.6';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -1608,7 +1608,7 @@ function updateCamera() {
   } else {
     return;
   }
-  camera.target = BABYLON.Vector3.Lerp(camera.target, target, 0.06);
+  camera.target = BABYLON.Vector3.Lerp(camera.target, target, 0.12);
 }
 
 // ── Intro screen ──

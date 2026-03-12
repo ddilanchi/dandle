@@ -1,7 +1,7 @@
 import { getRandomWord, isValidWord, getWordTypes, isVerb, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v5.0.8';
+const VERSION = 'v5.0.9';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -178,6 +178,9 @@ const animations = [];
 const BLOCK_ANIM_DURATION = 0.35;
 
 let _placementQueue = null;
+
+// ── Active push (reaction force applied over time) ──
+let _activePush = null; // { dir: {x,y,z}, strength, startTime, duration, newCubeSet }
 
 // ── Ghost preview ──
 let _ghostMeshes = [];
@@ -471,12 +474,27 @@ function _placeNextLetter() {
   const q = _placementQueue;
 
   if (q.index >= q.letters.length) {
-    // All letters placed — done
+    // All letters placed — start a sustained reaction push
+    const dv = q.dirVec;
+    const wordLen = q.letters.length;
+    // Collect which cubes are new (part of this word) so we can exclude them from push
+    const newCubeSet = new Set();
+    for (const l of q.letters) {
+      const c = cubes.find(cc => cc.gx === l.gx && (cc.gy || 0) === (l.gy || 0) && cc.gz === l.gz);
+      if (c) newCubeSet.add(c);
+    }
+    _activePush = {
+      dir: { x: -dv.x, y: -(dv.y || 0), z: -dv.z }, // opposite of build direction
+      strength: 15.0 * wordLen, // force per old cube per frame
+      startTime: performance.now() / 1000,
+      duration: 0.4,
+      newCubeSet,
+    };
+
     _placementQueue = null;
     clearGhosts();
 
     // Select the last placed letter
-    const dv = q.dirVec;
     const lastIdx = q.text.length - 1;
     const lastGx = q.startGx + dv.x * lastIdx;
     const lastGy = q.startGy + (dv.y || 0) * lastIdx;
@@ -496,7 +514,6 @@ function _placeNextLetter() {
 
   // Place this letter instantly at its grid position
   const l = q.letters[q.index];
-  const dv = q.dirVec;
 
   const cube = createStructureCube(l.letter, l.gx, l.gy, l.gz, l.wordIdx);
 
@@ -504,22 +521,6 @@ function _placeNextLetter() {
   cube.mesh.scaling.set(0.01, 0.01, 0.01);
   const anim = { cube, startTime: performance.now() / 1000, duration: 0.2 };
   animations.push(anim);
-
-  // Newton's 3rd law: new letter pushes the OLD structure in the OPPOSITE direction
-  // Only apply to cubes that existed before this word started (not the new letters)
-  const reactionStrength = 6.0;
-  for (const c of cubes) {
-    if (c === cube) continue; // skip the just-placed letter
-    if (c.wordIdx === l.wordIdx && q.letters.some(ll => ll.gx === c.gx && ll.gz === c.gz && (ll.gy || 0) === (c.gy || 0))) continue; // skip other new letters from this word
-    if (c.aggregate && c.aggregate.body) {
-      const impulse = new BABYLON.Vector3(
-        -dv.x * reactionStrength,
-        -(dv.y || 0) * reactionStrength,
-        -dv.z * reactionStrength
-      );
-      c.aggregate.body.applyImpulse(impulse, c.mesh.position);
-    }
-  }
 
   audio.pop(q.index);
 
@@ -1248,6 +1249,7 @@ function startLevel() {
   animations.length = 0;
   selectedCube = null;
   _placementQueue = null;
+  _activePush = null;
   clearGhosts();
   clearHighlight();
   removeDirectionArrow();
@@ -1667,6 +1669,28 @@ scene.registerBeforeRender(() => {
     const s = t * t * (3 - 2 * t); // smoothstep
     a.cube.mesh.scaling.set(s, s, s);
     if (t >= 1) animations.splice(i, 1);
+  }
+
+  // Sustained reaction push (Newton's 3rd law)
+  if (_activePush) {
+    const elapsed = time - _activePush.startTime;
+    if (elapsed >= _activePush.duration) {
+      _activePush = null;
+    } else {
+      // Ease out so force tapers off naturally
+      const t = 1 - (elapsed / _activePush.duration);
+      const force = _activePush.strength * t;
+      const d = _activePush.dir;
+      for (const c of cubes) {
+        if (_activePush.newCubeSet.has(c)) continue; // only push old structure
+        if (c.aggregate && c.aggregate.body) {
+          c.aggregate.body.applyForce(
+            new BABYLON.Vector3(d.x * force, d.y * force, d.z * force),
+            c.mesh.position
+          );
+        }
+      }
+    }
   }
 
   updateLetterZones();

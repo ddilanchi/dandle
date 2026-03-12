@@ -1,7 +1,7 @@
 import { getRandomWord, isValidWord, getWordTypes, isVerb, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v5.2.9';
+const VERSION = 'v5.3.0';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -477,6 +477,9 @@ function _placeNextLetter() {
     const wordLen = q.letters.length;
     _placementQueue = null;
     clearGhosts();
+
+    // Grey out any cubes disconnected from the starting word
+    _checkDisconnected();
 
     // Select the last placed letter
     const lastIdx = q.text.length - 1;
@@ -982,6 +985,45 @@ function _findComponents(cubeList) {
   return components;
 }
 
+// Check for cubes disconnected from the starting word and turn them to debris
+function _checkDisconnected() {
+  if (cubes.length <= 1) return;
+  // Find a root cube (from wordIdx 0 — the starting word)
+  const root = cubes.find(c => c.wordIdx === 0);
+  if (!root) return;
+
+  // BFS from root to find all connected cubes
+  const key = c => `${c.gx},${c.gy || 0},${c.gz}`;
+  const cubeMap = new Map();
+  for (const c of cubes) cubeMap.set(key(c), c);
+  const visited = new Set();
+  const stack = [root];
+  while (stack.length) {
+    const cur = stack.pop();
+    const ck = key(cur);
+    if (visited.has(ck)) continue;
+    visited.add(ck);
+    for (const [dx, dy, dz] of [[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]]) {
+      const nk = `${cur.gx + dx},${(cur.gy || 0) + dy},${cur.gz + dz}`;
+      if (cubeMap.has(nk) && !visited.has(nk)) stack.push(cubeMap.get(nk));
+    }
+  }
+
+  // Any cube not visited is disconnected
+  const disconnected = cubes.filter(c => !visited.has(key(c)));
+  if (disconnected.length > 0) {
+    // Deselect if selected cube is disconnected
+    if (selectedCube && disconnected.includes(selectedCube)) {
+      selectedCube = null;
+      clearHighlight();
+      removeDirectionArrow();
+      selectedInfoEl.textContent = '';
+      inputContainer.classList.add('hidden');
+    }
+    _spawnDebris(disconnected);
+  }
+}
+
 function _spawnDebris(debrisCubes) {
   for (const c of debrisCubes) {
     // Disconnect constraints
@@ -1426,12 +1468,12 @@ scene.onPointerObservable.add((pointerInfo) => {
       if (isDrag || levelComplete) return;
 
       const pickResult = scene.pick(evt.clientX, evt.clientY, (mesh) => {
-        return mesh.metadata && mesh.metadata.cube;
+        return mesh.metadata && mesh.metadata.cube && cubes.includes(mesh.metadata.cube);
       });
 
       if (pickResult.hit && pickResult.pickedMesh) {
         const cube = pickResult.pickedMesh.metadata.cube;
-        if (!cube) return;
+        if (!cube || !cubes.includes(cube)) return;
         selectedCube = cube;
         highlightCube(cube);
         selectedInfoEl.textContent = `Selected: [${cube.letter}] at (${cube.gx}, ${cube.gz})`;

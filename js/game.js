@@ -1,7 +1,7 @@
 import { getRandomWord, isValidWord, getWordTypes, isVerb, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v5.2.7';
+const VERSION = 'v5.2.8';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -85,7 +85,7 @@ scene.clearColor = new BABYLON.Color4(0.529, 0.808, 0.922, 1); // sky blue
 const camera = new BABYLON.ArcRotateCamera('cam', -Math.PI / 4, Math.PI / 3, 16, new BABYLON.Vector3(0, 0, 0), scene);
 camera.attachControl(canvas, true);
 camera.lowerRadiusLimit = 4;
-camera.upperRadiusLimit = 30;
+camera.upperRadiusLimit = 50;
 camera.upperBetaLimit = Math.PI / 2 - 0.05;
 camera.panningSensibility = 100;
 // Left-click (0) = orbit only. Middle (1) and Right (2) = pan.

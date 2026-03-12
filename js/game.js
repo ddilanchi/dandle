@@ -1,7 +1,7 @@
 import { getRandomWord, isValidWord, getWordTypes, isVerb, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v5.1.4';
+const VERSION = 'v5.1.5';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -498,6 +498,30 @@ function _placeNextLetter() {
   // Place this letter instantly at its grid position
   const l = q.letters[q.index];
 
+  // If this letter would go underground, lift everything up by 1
+  if (l.gy < 0) {
+    // Shift all existing cubes up by 1
+    for (const c of cubes) {
+      c.gy = (c.gy || 0) + 1;
+      const pos = c.mesh.position;
+      c.mesh.position.set(pos.x, pos.y + 1, pos.z);
+      if (c.aggregate && c.aggregate.body) {
+        c.aggregate.body.disablePreStep = false;
+      }
+    }
+    // Shift all word positions
+    for (const w of words) {
+      if (w.positions) {
+        for (const p of w.positions) p.gy = (p.gy || 0) + 1;
+      }
+    }
+    // Shift remaining letters in the queue
+    for (const ll of q.letters) {
+      ll.gy += 1;
+    }
+    q.startGy += 1;
+  }
+
   const cube = createStructureCube(l.letter, l.gx, l.gy, l.gz, l.wordIdx);
 
   // Scale-in animation
@@ -530,36 +554,6 @@ function placeWord(text, startGx, startGz, dir, wordIdx, animated = false, start
       gy: startGy + (dirVec.y || 0) * i,
       gz: startGz + dirVec.z * i,
     });
-  }
-
-  // Check if any new cube would go underground (gy < 0)
-  // If so, shift the ENTIRE structure up and adjust positions
-  let minGy = Infinity;
-  for (const p of allPositions) {
-    if (!cubes.find(c => c.gx === p.gx && (c.gy || 0) === p.gy && c.gz === p.gz)) {
-      minGy = Math.min(minGy, p.gy);
-    }
-  }
-  if (minGy < 0) {
-    const lift = -minGy;
-    // Shift grid coords AND teleport physics bodies up
-    for (const c of cubes) {
-      c.gy = (c.gy || 0) + lift;
-      const pos = c.mesh.position;
-      c.mesh.position.set(pos.x, pos.y + lift, pos.z);
-      if (c.aggregate && c.aggregate.body) {
-        c.aggregate.body.disablePreStep = false;
-      }
-    }
-    for (const w of words) {
-      if (w.positions) {
-        for (const p of w.positions) p.gy = (p.gy || 0) + lift;
-      }
-    }
-    for (const p of allPositions) {
-      p.gy += lift;
-    }
-    startGy += lift;
   }
 
   const wordEntry = { text, dir, positions: allPositions, _deleted: false };

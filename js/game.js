@@ -1,7 +1,7 @@
 import { getRandomWord, isValidWord, getWordTypes, isVerb, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v5.1.9';
+const VERSION = 'v5.2.0';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -1083,27 +1083,25 @@ function _getOpenFaces(cube) {
 function _handleNavKey(key) {
   if (!selectedCube) return false;
 
-  // Camera-relative navigation: project camera forward/right onto XZ plane
-  // then snap to nearest grid axis
+  // Camera-relative navigation: snap camera forward to nearest grid axis,
+  // then derive right as the perpendicular axis (guarantees 4 distinct directions)
   const camForward = camera.target.subtract(camera.position);
-  const fwdXZ = new BABYLON.Vector2(camForward.x, camForward.z);
-  fwdXZ.normalize();
-  const rightXZ = new BABYLON.Vector2(-fwdXZ.y, fwdXZ.x); // perpendicular
-
-  function snapToGrid(v2) {
-    // Snap a 2D direction to the nearest cardinal grid direction
-    if (Math.abs(v2.x) > Math.abs(v2.y)) {
-      return { x: Math.sign(v2.x), y: 0, z: 0 };
-    } else {
-      return { x: 0, y: 0, z: Math.sign(v2.y) };
-    }
+  const fx = camForward.x, fz = camForward.z;
+  // Snap forward to nearest cardinal axis
+  let fwd;
+  if (Math.abs(fx) > Math.abs(fz)) {
+    fwd = { x: Math.sign(fx), y: 0, z: 0 };
+  } else {
+    fwd = { x: 0, y: 0, z: Math.sign(fz) };
   }
+  // Right is always perpendicular (90° CW in XZ)
+  const right = { x: -fwd.z, y: 0, z: fwd.x };
 
   const moveMap = {
-    'W': snapToGrid(fwdXZ),
-    'S': snapToGrid(new BABYLON.Vector2(-fwdXZ.x, -fwdXZ.y)),
-    'A': snapToGrid(new BABYLON.Vector2(-rightXZ.x, -rightXZ.y)),
-    'D': snapToGrid(rightXZ),
+    'W': fwd,
+    'S': { x: -fwd.x, y: 0, z: -fwd.z },
+    'A': { x: -right.x, y: 0, z: -right.z },
+    'D': right,
     'Q': { x: 0, y: 1, z: 0 },
     'E': { x: 0, y: -1, z: 0 },
   };

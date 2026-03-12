@@ -7,7 +7,7 @@ import { Physics } from './physics.js';
 
 await RAPIER.init();
 
-const VERSION = 'v4.1.3';
+const VERSION = 'v4.2.0';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -330,11 +330,12 @@ function _placeNextLetter() {
   const l = q.letters[q.index];
   const mesh = makeLetterMesh(l.letter);
 
-  // Spawn position: previous letter's grid pos, or one step behind first letter
-  const prev = q.index > 0 ? q.letters[q.index - 1] : null;
-  const fromLocalX = prev ? prev.gx : (l.gx - q.dirVec.x);
-  const fromLocalY = prev ? (0.5 + prev.gy) : (0.5 + l.gy - (q.dirVec.y || 0));
-  const fromLocalZ = prev ? prev.gz : (l.gz - q.dirVec.z);
+  // Spawn BEHIND the target (opposite build direction) so the letter
+  // pushes the structure forward as it slides into position
+  const spawnDist = 3;
+  const fromLocalX = l.gx - q.dirVec.x * spawnDist;
+  const fromLocalY = 0.5 + l.gy - (q.dirVec.y || 0) * spawnDist;
+  const fromLocalZ = l.gz - q.dirVec.z * spawnDist;
 
   mesh.position.set(fromLocalX, fromLocalY, fromLocalZ);
   structureGroup.add(mesh);

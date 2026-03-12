@@ -88,6 +88,12 @@ export class Physics {
     let stepped = false;
     let steps = 0;
     while (this._accumulator >= PHYS_STEP) {
+      // Apply sustained force to all flying letters before stepping
+      for (const [, entry] of this._growingBodies) {
+        const d = entry.dir;
+        const f = entry.force;
+        entry.body.applyForce({ x: d.x * f, y: d.y * f, z: d.z * f }, true);
+      }
       this.world.step();
       this._accumulator -= PHYS_STEP;
       stepped = true;
@@ -405,11 +411,11 @@ export class Physics {
       .setCollisionGroups(GROUPS_GROWING);  // collides with ground only, not structure
     this.world.createCollider(cd, body);
 
-    // Launch toward target
-    body.setLinvel({ x: dir.x * speed, y: dir.y * speed, z: dir.z * speed }, true);
+    // Store direction for sustained force (applied each step)
+    const force = speed * body.mass();
 
     const id = this._growId++;
-    this._growingBodies.set(id, { body, target: targetWorldPos });
+    this._growingBodies.set(id, { body, target: targetWorldPos, dir, force });
     return id;
   }
 

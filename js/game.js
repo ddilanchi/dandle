@@ -138,7 +138,7 @@ async function initPhysics() {
 
 // ── Physics constants ──
 const CUBE_HALF = 0.5;
-const STRUCT_FRICTION = 0.1;
+const STRUCT_FRICTION = 0.5;
 const STRUCT_RESTITUTION = 0.02;
 const STATIC_FRICTION = 0.8;
 
@@ -198,7 +198,7 @@ function _makeCanvasTex(letter, bgColor, borderColor, textColor) {
   const c = document.createElement('canvas');
   c.width = 128; c.height = 128;
   const ctx = c.getContext('2d');
-  ctx.fillStyle = bgColor || '#f5ecd7';
+  ctx.fillStyle = bgColor || '#faf3e0';
   ctx.fillRect(0, 0, 128, 128);
   ctx.strokeStyle = borderColor || '#999';
   ctx.lineWidth = 4;
@@ -686,15 +686,18 @@ function updateGhostPreview() {
 
 // ── End zone ──
 function createEndZone(x, z, w, d, y = 0) {
+  const dynTex = new BABYLON.DynamicTexture('endZoneDynTex', 256, scene, false);
   const mat = new BABYLON.StandardMaterial('endZoneMat', scene);
-  mat.diffuseColor = new BABYLON.Color3(1, 0.15, 0.15);
+  mat.diffuseTexture = dynTex;
   mat.emissiveColor = new BABYLON.Color3(1, 0.3, 0.2);
   mat.alpha = 0.7;
+  mat.backFaceCulling = false;
 
   endZone = BABYLON.MeshBuilder.CreateGround('endZone', { width: w, height: d }, scene);
   endZone.position.set(x, y + 0.01, z);
   endZone.material = mat;
   endZone.isPickable = false;
+  endZone._dynTex = dynTex;
 
   endZoneBox = new BABYLON.BoundingInfo(
     new BABYLON.Vector3(x - w / 2, y, z - d / 2),
@@ -1718,8 +1721,22 @@ function updatePhysics() {
 function animateEndZone(time) {
   if (endZone && endZone.material) {
     endZone.material.alpha = 0.55 + Math.sin(time * 3) * 0.2;
-    endZone.material.emissiveColor.r = 1;
-    endZone.material.emissiveColor.g = 0.2 + Math.sin(time * 2) * 0.1;
+    // Animated gradient on dynamic texture
+    if (endZone._dynTex) {
+      const ctx = endZone._dynTex.getContext();
+      const sz = 256;
+      const shift = (time * 0.4) % 1;
+      const grad = ctx.createLinearGradient(0, 0, sz, sz);
+      const s = shift;
+      grad.addColorStop(0, `hsl(${0 + s * 360}, 90%, 50%)`);
+      grad.addColorStop(0.25, `hsl(${20 + s * 360}, 85%, 55%)`);
+      grad.addColorStop(0.5, `hsl(${350 + s * 360}, 90%, 50%)`);
+      grad.addColorStop(0.75, `hsl(${30 + s * 360}, 85%, 55%)`);
+      grad.addColorStop(1, `hsl(${0 + s * 360}, 90%, 50%)`);
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, sz, sz);
+      endZone._dynTex.update();
+    }
   }
 }
 

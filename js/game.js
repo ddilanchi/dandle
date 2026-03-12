@@ -1,7 +1,7 @@
 import { getRandomWord, isValidWord, getWordTypes, isVerb, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v5.1.7';
+const VERSION = 'v5.1.8';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -1082,11 +1082,32 @@ function _getOpenFaces(cube) {
 
 function _handleNavKey(key) {
   if (!selectedCube) return false;
+
+  // Camera-relative navigation: project camera forward/right onto XZ plane
+  // then snap to nearest grid axis
+  const camForward = camera.target.subtract(camera.position);
+  const fwdXZ = new BABYLON.Vector2(camForward.x, camForward.z);
+  fwdXZ.normalize();
+  const rightXZ = new BABYLON.Vector2(-fwdXZ.y, fwdXZ.x); // perpendicular
+
+  function snapToGrid(v2) {
+    // Snap a 2D direction to the nearest cardinal grid direction
+    if (Math.abs(v2.x) > Math.abs(v2.y)) {
+      return { x: Math.sign(v2.x), y: 0, z: 0 };
+    } else {
+      return { x: 0, y: 0, z: Math.sign(v2.y) };
+    }
+  }
+
   const moveMap = {
-    'W': { x: 0, y: 0, z: -1 }, 'S': { x: 0, y: 0, z: 1 },
-    'A': { x: -1, y: 0, z: 0 }, 'D': { x: 1, y: 0, z: 0 },
-    'Q': { x: 0, y: 1, z: 0 }, 'E': { x: 0, y: -1, z: 0 },
+    'W': snapToGrid(fwdXZ),
+    'S': snapToGrid(new BABYLON.Vector2(-fwdXZ.x, -fwdXZ.y)),
+    'A': snapToGrid(new BABYLON.Vector2(-rightXZ.x, -rightXZ.y)),
+    'D': snapToGrid(rightXZ),
+    'Q': { x: 0, y: 1, z: 0 },
+    'E': { x: 0, y: -1, z: 0 },
   };
+
   if (moveMap[key]) {
     const m = moveMap[key];
     const neighbor = cubes.find(c =>

@@ -640,7 +640,10 @@ function updateGhostPreview() {
       const existing = cubes.find(c => c.gx === gx && (c.gy || 0) === gy && c.gz === gz);
       if (existing && existing.letter !== text[i]) { conflict = true; break; }
     }
-    if (!conflict) { bestIdx = idx; break; }
+    if (!conflict) {
+      const err = validatePlacement(text, sx, sy, sz, dv);
+      if (!err) { bestIdx = idx; break; }
+    }
   }
   if (bestIdx === -1) return;
 
@@ -1248,6 +1251,12 @@ function validatePlacement(text, startGx, startGy, startGz, dv) {
       if (neighbor) return `[${text[i]}] would be adjacent to [${neighbor.letter}]`;
     }
   }
+
+  // Reject consecutive duplicate letters (same letter tiles adjacent along word axis)
+  for (let i = 0; i < text.length - 1; i++) {
+    if (text[i] === text[i + 1]) return `Adjacent same letters [${text[i]}][${text[i]}] not allowed`;
+  }
+
   return null;
 }
 

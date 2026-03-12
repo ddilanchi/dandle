@@ -42,10 +42,10 @@ function packGroups(membership, filter) {
 
 // Ground collides with everything
 const GROUPS_GROUND    = packGroups(CG_GROUND, 0xffff);
-// Structure collides with ground + debris (not growing — growing is cosmetic)
-const GROUPS_STRUCTURE = packGroups(CG_STRUCTURE, CG_GROUND | CG_DEBRIS);
-// Growing collides with nothing — pure physics flight, no friction/blocking
-const GROUPS_GROWING   = packGroups(CG_GROWING, 0);
+// Structure collides with ground + debris + growing (growing pushes structure)
+const GROUPS_STRUCTURE = packGroups(CG_STRUCTURE, CG_GROUND | CG_DEBRIS | CG_GROWING);
+// Growing collides with ground + structure (pushes structure!), not other growing
+const GROUPS_GROWING   = packGroups(CG_GROWING, CG_GROUND | CG_STRUCTURE);
 // Debris collides with ground + structure + other debris
 const GROUPS_DEBRIS    = packGroups(CG_DEBRIS, CG_GROUND | CG_STRUCTURE | CG_DEBRIS);
 
@@ -393,9 +393,8 @@ export class Physics {
     const desc = this.RAPIER.RigidBodyDesc.dynamic()
       .setTranslation(worldPos.x, worldPos.y, worldPos.z)
       .setCanSleep(false)
-      .setLinearDamping(2.0)   // high damping so it decelerates near target
-      .setAngularDamping(5.0)  // don't spin much
-      .setGravityScale(0);     // ignore gravity while flying into place
+      .setLinearDamping(0.5)
+      .setAngularDamping(5.0);
     const body = this.world.createRigidBody(desc);
 
     const cd = this.RAPIER.ColliderDesc.cuboid(CUBE_HALF, CUBE_HALF, CUBE_HALF)

@@ -187,35 +187,10 @@ let _ghostMeshes = [];
 const explosionPieces = [];
 
 // ── Letter mesh creation (canvas texture on box) ──
-function makeLetterTexture(letter, bgColor = '#f5ecd7', borderColor = '#999', textColor = '#222') {
-  const c = document.createElement('canvas');
-  c.width = 128; c.height = 128;
-  const ctx = c.getContext('2d');
-  ctx.fillStyle = bgColor;
-  ctx.fillRect(0, 0, 128, 128);
-  ctx.strokeStyle = borderColor;
-  ctx.lineWidth = 4;
-  ctx.strokeRect(2, 2, 124, 124);
-  ctx.fillStyle = textColor;
-  ctx.font = 'bold 78px Arial';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(letter, 64, 68);
-  const tex = new BABYLON.DynamicTexture('letterTex_' + letter + '_' + Math.random(), c, scene, false);
-  tex.update(false);
-  // Copy canvas data
-  const texCtx = tex.getContext();
-  texCtx.drawImage(c, 0, 0);
-  tex.update(false);
-  return tex;
-}
-
 function makeLetterMaterial(letter, bgColor, borderColor, textColor) {
   const mat = new BABYLON.StandardMaterial('letterMat_' + letter + '_' + Math.random(), scene);
-  // Create canvas texture
-  const c = document.createElement('canvas');
-  c.width = 128; c.height = 128;
-  const ctx = c.getContext('2d');
+  const dt = new BABYLON.DynamicTexture('dt_' + Math.random(), 128, scene, false);
+  const ctx = dt.getContext();
   ctx.fillStyle = bgColor || '#f5ecd7';
   ctx.fillRect(0, 0, 128, 128);
   ctx.strokeStyle = borderColor || '#999';
@@ -226,14 +201,6 @@ function makeLetterMaterial(letter, bgColor, borderColor, textColor) {
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(letter, 64, 68);
-
-  const tex = BABYLON.RawTexture.CreateRGBATexture(
-    null, 128, 128, scene, false, false
-  );
-  // Use DynamicTexture instead
-  const dt = new BABYLON.DynamicTexture('dt_' + Math.random(), { width: 128, height: 128 }, scene, false);
-  const dtCtx = dt.getContext();
-  dtCtx.drawImage(c, 0, 0);
   dt.update(false);
   mat.diffuseTexture = dt;
   return mat;
@@ -303,43 +270,36 @@ function buildFloor(tiles) {
       maxZ = Math.max(maxZ, t.z + 1);
     }
 
-    const green = new BABYLON.Color3(0.416, 0.678, 0.478);
-    const beige = new BABYLON.Color3(0.925, 0.878, 0.753);
+    // Two materials for checkerboard
+    const greenMat = new BABYLON.StandardMaterial('floorGreen_' + yLevel, scene);
+    greenMat.diffuseColor = new BABYLON.Color3(0.416, 0.678, 0.478);
+    const beigeMat = new BABYLON.StandardMaterial('floorBeige_' + yLevel, scene);
+    beigeMat.diffuseColor = new BABYLON.Color3(0.925, 0.878, 0.753);
 
-    // Visual: individual tiles using thin instances
-    const tileBox = BABYLON.MeshBuilder.CreateBox('floor_tile', { width: 1, height: 1, depth: 1 }, scene);
-    const tileMat = new BABYLON.StandardMaterial('floorMat_' + yLevel, scene);
-    tileMat.diffuseColor = green; // base color
-    tileBox.material = tileMat;
-    tileBox.receiveShadows = true;
-    tileBox.isPickable = false;
+    // Template boxes for each color (instances share parent material)
+    const greenBox = BABYLON.MeshBuilder.CreateBox('floor_green', { width: 1, height: 1, depth: 1 }, scene);
+    greenBox.material = greenMat;
+    greenBox.receiveShadows = true;
+    greenBox.isPickable = false;
+    greenBox.setEnabled(false); // template only
 
-    // Position the template tile off-screen, use instances
-    tileBox.position.set(group[0].x + 0.5, yLevel - 0.5, group[0].z + 0.5);
+    const beigeBox = BABYLON.MeshBuilder.CreateBox('floor_beige', { width: 1, height: 1, depth: 1 }, scene);
+    beigeBox.material = beigeMat;
+    beigeBox.receiveShadows = true;
+    beigeBox.isPickable = false;
+    beigeBox.setEnabled(false); // template only
 
-    // For remaining tiles, use thin instances
-    if (group.length > 1) {
-      const matrices = [];
-      for (let i = 1; i < group.length; i++) {
-        const t = group[i];
-        const mat = BABYLON.Matrix.Translation(
-          (t.x + 0.5) - (group[0].x + 0.5),
-          0,
-          (t.z + 0.5) - (group[0].z + 0.5)
-        );
-        matrices.push(mat);
-      }
-      // Use instances instead of thin instances for simplicity
-      for (let i = 1; i < group.length; i++) {
-        const t = group[i];
-        const inst = tileBox.createInstance('floorInst_' + i);
-        inst.position.set(t.x + 0.5, yLevel - 0.5, t.z + 0.5);
-        inst.receiveShadows = true;
-        inst.isPickable = false;
-        floorMeshes.push(inst);
-      }
+    for (const t of group) {
+      const isGreen = (t.x + t.z) % 2 === 0;
+      const parent = isGreen ? greenBox : beigeBox;
+      const inst = parent.createInstance('floorInst_' + t.x + '_' + t.z);
+      inst.position.set(t.x + 0.5, yLevel - 0.5, t.z + 0.5);
+      inst.receiveShadows = true;
+      inst.isPickable = false;
+      floorMeshes.push(inst);
     }
-    floorMeshes.push(tileBox);
+    floorMeshes.push(greenBox);
+    floorMeshes.push(beigeBox);
 
     // Physics: one big static box per y-level
     const w = maxX - minX;

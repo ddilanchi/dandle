@@ -1,7 +1,7 @@
 import { getRandomWord, isValidWord, getWordTypes, isVerb, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v5.2.8';
+const VERSION = 'v5.2.9';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -1095,49 +1095,19 @@ function _getOpenFaces(cube) {
 function _handleNavKey(key) {
   if (!selectedCube) return false;
 
-  // Camera-relative navigation using dot product — no grid snapping.
-  // Find the adjacent cube that best matches the desired screen direction.
-  const camFwd = camera.getDirection(BABYLON.Axis.Z);   // camera's forward in world
-  const camRight = camera.getDirection(BABYLON.Axis.X);  // camera's right in world
-
-  // Desired direction in world XZ for each key
-  const dirMap = {
-    'W': { x: camFwd.x, z: camFwd.z },
-    'S': { x: -camFwd.x, z: -camFwd.z },
-    'A': { x: -camRight.x, z: -camRight.z },
-    'D': { x: camRight.x, z: camRight.z },
+  // Fixed world-axis navigation: W/S = Z, A/D = X, Q/E = Y
+  const moveMap = {
+    'W': { x: 0, y: 0, z: -1 }, 'S': { x: 0, y: 0, z: 1 },
+    'A': { x: -1, y: 0, z: 0 }, 'D': { x: 1, y: 0, z: 0 },
+    'Q': { x: 0, y: 1, z: 0 }, 'E': { x: 0, y: -1, z: 0 },
   };
 
-  if (dirMap[key]) {
-    const dir = dirMap[key];
-    // Find best adjacent cube in the XZ plane matching this direction
-    let bestCube = null, bestDot = -Infinity;
-    for (const c of cubes) {
-      const dx = c.gx - selectedCube.gx;
-      const dy = (c.gy || 0) - (selectedCube.gy || 0);
-      const dz = c.gz - selectedCube.gz;
-      if (Math.abs(dx) + Math.abs(dy) + Math.abs(dz) !== 1) continue;
-      if (dy !== 0) continue; // Q/E handles vertical
-      const dot = dx * dir.x + dz * dir.z;
-      if (dot > bestDot) { bestDot = dot; bestCube = c; }
-    }
-    if (bestCube && bestDot > 0) {
-      selectedCube = bestCube;
-      highlightCube(bestCube);
-      selectedInfoEl.textContent = `Selected: [${bestCube.letter}] at (${bestCube.gx}, ${bestCube.gz})`;
-      audio.select();
-      updateGhostPreview();
-    }
-    return true;
-  }
-
-  // Q/E for vertical
-  const vertMap = { 'Q': 1, 'E': -1 };
-  if (vertMap[key] !== undefined) {
+  if (moveMap[key]) {
+    const m = moveMap[key];
     const neighbor = cubes.find(c =>
-      c.gx === selectedCube.gx &&
-      (c.gy || 0) === (selectedCube.gy || 0) + vertMap[key] &&
-      c.gz === selectedCube.gz
+      c.gx === selectedCube.gx + m.x &&
+      (c.gy || 0) === (selectedCube.gy || 0) + m.y &&
+      c.gz === selectedCube.gz + m.z
     );
     if (neighbor) {
       selectedCube = neighbor;

@@ -1,7 +1,7 @@
 import { getRandomWord, isValidWord, getWordTypes, isVerb, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v5.1.8';
+const VERSION = 'v5.1.9';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -1414,33 +1414,35 @@ function startLevel() {
 let mouseDownPos = { x: 0, y: 0 };
 let isDrag = false;
 
-scene.onPointerDown = (evt) => {
-  mouseDownPos = { x: evt.clientX, y: evt.clientY };
-  isDrag = false;
-  audio.init();
-};
+scene.onPointerObservable.add((pointerInfo) => {
+  const evt = pointerInfo.event;
+  switch (pointerInfo.type) {
+    case BABYLON.PointerEventTypes.POINTERDOWN:
+      mouseDownPos = { x: evt.clientX, y: evt.clientY };
+      isDrag = false;
+      audio.init();
+      break;
+    case BABYLON.PointerEventTypes.POINTERMOVE: {
+      const dx = evt.clientX - mouseDownPos.x;
+      const dy = evt.clientY - mouseDownPos.y;
+      if (Math.sqrt(dx * dx + dy * dy) > 5) isDrag = true;
+      break;
+    }
+    case BABYLON.PointerEventTypes.POINTERUP: {
+      if (isDrag || levelComplete) return;
 
-scene.onPointerMove = (evt) => {
-  const dx = evt.clientX - mouseDownPos.x;
-  const dy = evt.clientY - mouseDownPos.y;
-  if (Math.sqrt(dx * dx + dy * dy) > 5) isDrag = true;
-};
+      const pickResult = scene.pick(evt.clientX, evt.clientY, (mesh) => {
+        return mesh.metadata && mesh.metadata.cube;
+      });
 
-scene.onPointerUp = (evt) => {
-  if (isDrag || levelComplete) return;
-
-  const pickResult = scene.pick(evt.clientX, evt.clientY, (mesh) => {
-    return mesh.metadata && mesh.metadata.cube;
-  });
-
-  if (pickResult.hit && pickResult.pickedMesh) {
-    const cube = pickResult.pickedMesh.metadata.cube;
-    if (!cube) return;
-    selectedCube = cube;
-    highlightCube(cube);
-    selectedInfoEl.textContent = `Selected: [${cube.letter}] at (${cube.gx}, ${cube.gz})`;
-    inputContainer.classList.remove('hidden');
-    wordInput.value = '';
+      if (pickResult.hit && pickResult.pickedMesh) {
+        const cube = pickResult.pickedMesh.metadata.cube;
+        if (!cube) return;
+        selectedCube = cube;
+        highlightCube(cube);
+        selectedInfoEl.textContent = `Selected: [${cube.letter}] at (${cube.gx}, ${cube.gz})`;
+        inputContainer.classList.remove('hidden');
+        wordInput.value = '';
     wordInput.focus();
     audio.select();
   } else {
@@ -1450,7 +1452,10 @@ scene.onPointerUp = (evt) => {
     selectedInfoEl.textContent = '';
     inputContainer.classList.add('hidden');
   }
-};
+      break;
+    }
+  }
+});
 
 // ── Input handlers ──
 submitBtn.addEventListener('click', submitWord);

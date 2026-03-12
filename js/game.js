@@ -1,7 +1,7 @@
 import { getRandomWord, isValidWord, getWordTypes, isVerb, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v5.0.7';
+const VERSION = 'v5.0.8';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -505,10 +505,12 @@ function _placeNextLetter() {
   const anim = { cube, startTime: performance.now() / 1000, duration: 0.2 };
   animations.push(anim);
 
-  // Newton's 3rd law: each new letter pushes the structure in the OPPOSITE direction
-  // Like a leg pushing down against the ground launches you upward
-  const reactionStrength = 4.0;
+  // Newton's 3rd law: new letter pushes the OLD structure in the OPPOSITE direction
+  // Only apply to cubes that existed before this word started (not the new letters)
+  const reactionStrength = 6.0;
   for (const c of cubes) {
+    if (c === cube) continue; // skip the just-placed letter
+    if (c.wordIdx === l.wordIdx && q.letters.some(ll => ll.gx === c.gx && ll.gz === c.gz && (ll.gy || 0) === (c.gy || 0))) continue; // skip other new letters from this word
     if (c.aggregate && c.aggregate.body) {
       const impulse = new BABYLON.Vector3(
         -dv.x * reactionStrength,

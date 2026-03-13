@@ -131,10 +131,9 @@ function addBlock(layer, x, y, z, mat, extra) {
     // Visual indicator: skew via non-uniform scaling to suggest slope
     mesh.material = mat;
   } else {
-    const h = isFloor ? 0.2 : 1;
     mesh = BABYLON.MeshBuilder.CreateBox(layer + '_' + key,
-      { width: 0.96, height: h * 0.96, depth: 0.96 }, scene);
-    mesh.position.set(x + 0.5, isFloor ? y - 0.1 : y + 0.5, z + 0.5);
+      { width: 0.96, height: 0.96, depth: 0.96 }, scene);
+    mesh.position.set(x + 0.5, y + 0.5, z + 0.5);
     mesh.material = mat;
   }
 
@@ -179,8 +178,8 @@ function getFloorMat(x, z) { return (x + z) % 2 === 0 ? mats.floorGreen : mats.f
 function addFloor(x, z, y) { return addBlock('floor', x, y, z, getFloorMat(x, z)); }
 
 function addDefaultFloor() {
-  for (let x = -20; x < 20; x++)
-    for (let z = -20; z < 20; z++)
+  for (let x = -8; x <= 8; x++)
+    for (let z = -8; z <= 8; z++)
       addFloor(x, z, 0);
 }
 
@@ -219,8 +218,7 @@ function updateHighlight() {
   if (selected.type === 'zipline') return;
   const entry = blocks[selected.type]?.get(selected.key);
   if (!entry) { selected = null; return; }
-  const isFloor = selected.type === 'floor';
-  const h = isFloor ? 0.25 : 1.05;
+  const h = 1.05;
   selectedHighlight = BABYLON.MeshBuilder.CreateBox('selH', { width: 1.04, height: h, depth: 1.04 }, scene);
   selectedHighlight.position.copyFrom(entry.mesh.position);
   selectedHighlight.material = mats.select;
@@ -304,9 +302,7 @@ scene.onPointerObservable.add((info) => {
       const hit = getGroundHit();
       if (hit) {
         cursorMesh.setEnabled(true);
-        const h = tool === 'floor' ? 0.2 : 1;
-        cursorMesh.scaling.set(1, h, 1);
-        cursorMesh.position.set(hit.x + 0.5, hit.y + (tool === 'floor' ? -0.1 : 0.5), hit.z + 0.5);
+        cursorMesh.position.set(hit.x + 0.5, hit.y + 0.5, hit.z + 0.5);
       } else cursorMesh.setEnabled(false);
     } else cursorMesh.setEnabled(false);
 
@@ -589,10 +585,10 @@ function exportLevel() {
   if (blocks.floor.size === 0) {
     config.floor = { type: 'default' };
   } else {
-    let isDefault = blocks.floor.size === 40 * 40;
+    let isDefault = blocks.floor.size === 17 * 17;
     if (isDefault) {
-      for (let x = -20; x < 20 && isDefault; x++)
-        for (let z = -20; z < 20 && isDefault; z++)
+      for (let x = -8; x <= 8 && isDefault; x++)
+        for (let z = -8; z <= 8 && isDefault; z++)
           if (!blocks.floor.has(bkey(x, 0, z))) isDefault = false;
     }
     config.floor = isDefault

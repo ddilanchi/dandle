@@ -1220,7 +1220,6 @@ function applyPowerUp(letter, type) {
     mat.emissiveColor = new BABYLON.Color3(0.3, 0, 0);
     target.mesh.material = mat;
     target._powerUp = 'bomb';
-    target._bombTimer = 3.0; // seconds until detonation
   } else if (type === 'spring') {
     const mat = _matte(new BABYLON.StandardMaterial('springM', scene));
     mat.diffuseColor = new BABYLON.Color3(0, 0.9, 0.4);
@@ -1239,20 +1238,37 @@ function updatePowerUpEffects(dt) {
       c.aggregate.body.applyForce(
         new BABYLON.Vector3(0, 15, 0), c.mesh.position);
     } else if (c._powerUp === 'bomb') {
-      c._bombTimer -= dt;
-      // Flash red
-      if (c._bombTimer < 1.5) {
-        const flash = Math.sin(c._bombTimer * 15) > 0;
-        c.mesh.material.emissiveColor = flash
-          ? new BABYLON.Color3(1, 0, 0) : new BABYLON.Color3(0.3, 0, 0);
+      // Pulse glow
+      const glow = (Math.sin(performance.now() / 1000 * 6) + 1) * 0.5;
+      c.mesh.material.emissiveColor = new BABYLON.Color3(0.3 + glow * 0.7, 0, 0);
+
+      // Collision-based: check if touching any wall, obstacle, or ground-level static block
+      const pos = c.mesh.position;
+      let detonate = false;
+
+      // Check against level obstacles (walls, destructibles, etc.)
+      for (const obs of levelObstacles) {
+        if (!obs.position || obs.isDisposed()) continue;
+        const dp = obs.position.subtract(pos);
+        if (dp.length() < 1.3) { detonate = true; break; }
       }
-      if (c._bombTimer <= 0) {
-        // EXPLODE
-        const pos = c.mesh.position.clone();
+
+      // Also detonate on high-speed collision (velocity change)
+      if (!detonate && c.aggregate && c.aggregate.body) {
+        const vel = c.aggregate.body.getLinearVelocity();
+        const speed = vel.length();
+        if (!c._bombLastSpeed) c._bombLastSpeed = speed;
+        const decel = c._bombLastSpeed - speed;
+        if (decel > 5) detonate = true; // sudden deceleration = impact
+        c._bombLastSpeed = speed;
+      }
+
+      if (detonate) {
+        const bpos = pos.clone();
         // Push all nearby cubes
         for (const other of cubes) {
           if (other === c || !other.aggregate) continue;
-          const dp = other.mesh.position.subtract(pos);
+          const dp = other.mesh.position.subtract(bpos);
           const dist = dp.length();
           if (dist < 5) {
             const force = dp.normalize().scale(40 / Math.max(dist, 0.5));
@@ -1261,8 +1277,8 @@ function updatePowerUpEffects(dt) {
         }
         // Destroy nearby destructible blocks
         for (const obs of levelObstacles) {
-          if (obs.metadata && obs.metadata.destructible) {
-            const dp = obs.position.subtract(pos);
+          if (obs.metadata && obs.metadata.destructible && !obs.isDisposed()) {
+            const dp = obs.position.subtract(bpos);
             if (dp.length() < 4) {
               obs.metadata.health--;
               if (obs.metadata.health <= 0) {
@@ -1273,6 +1289,7 @@ function updatePowerUpEffects(dt) {
           }
         }
         c._powerUp = null;
+        c._bombLastSpeed = null;
         showMessage('BOOM!', '#ff4400');
         audio.explode();
       }

@@ -1,7 +1,7 @@
 import { getRandomWord, isValidWord, getWordTypes, isVerb, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v5.3.8';
+const VERSION = 'v5.3.9';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -1208,7 +1208,6 @@ function _findNavTarget(fromCube, dirX, dirY, dirZ) {
 if (typeof window !== 'undefined') window._findNavTarget = _findNavTarget;
 
 function _handleNavKey(key) {
-  console.warn('[NAV-ENTRY] key=' + key + ' selectedCube=' + (selectedCube ? selectedCube.letter : 'null'));
   if (!selectedCube) return false;
 
   const moveMap = {
@@ -1219,20 +1218,14 @@ function _handleNavKey(key) {
 
   if (moveMap[key]) {
     const [mx, my, mz] = moveMap[key];
-    const sp = selectedCube.mesh.position;
-    console.log(`[NAV] key=${key} dir=(${mx},${my},${mz}) from=[${selectedCube.letter}] pos=(${sp.x.toFixed(1)},${sp.y.toFixed(1)},${sp.z.toFixed(1)}) cubes=${cubes.length}`);
     const neighbor = _findNavTarget(selectedCube, mx, my, mz);
     if (neighbor) {
-      const np = neighbor.mesh.position;
-      console.log(`[NAV] -> [${neighbor.letter}] pos=(${np.x.toFixed(1)},${np.y.toFixed(1)},${np.z.toFixed(1)})`);
       selectedCube = neighbor;
       highlightCube(neighbor);
       selectedInfoEl.textContent = `Selected: [${neighbor.letter}] at (${neighbor.gx}, ${neighbor.gz})`;
       audio.select();
       updateGhostPreview();
       advanceTutorial('navigate');
-    } else {
-      console.log('[NAV] -> no target found');
     }
     return true;
   }
@@ -1579,7 +1572,8 @@ submitBtn.addEventListener('click', submitWord);
 wordInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { submitWord(); return; }
   if (e.key.startsWith('Arrow')) return;
-  if (e.shiftKey && _handleNavKey(e.key.toUpperCase())) {
+  // Shift+letter/space = navigation. Ignore bare modifier keys.
+  if (e.shiftKey && e.key.length === 1 && _handleNavKey(e.key.toUpperCase())) {
     e.preventDefault();
     e.stopPropagation();
     return;
@@ -1668,6 +1662,7 @@ window.addEventListener('keydown', (e) => {
 // ── Global shift nav ──
 window.addEventListener('keydown', (e) => {
   if (!e.shiftKey || levelComplete || paused || _placementQueue) return;
+  if (e.key.length !== 1) return; // ignore bare modifier keys
   const key = e.key.toUpperCase();
   if ('WASDEQ '.includes(key) || key === ' ') {
     if (_handleNavKey(key === ' ' ? ' ' : key)) e.preventDefault();

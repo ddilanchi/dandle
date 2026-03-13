@@ -51,6 +51,7 @@ const blocks = {
   moving: new Map(),
   destructible: new Map(),
   spawner: new Map(),
+  powerup: new Map(),
 };
 let zipLines = [];
 let zipLineMeshes = [];
@@ -89,6 +90,7 @@ const mats = {
   moving: (() => { const m = makeMat('mov', 0.3, 0.8, 0.3); m.emissiveColor = new BABYLON.Color3(0.05, 0.2, 0.05); return m; })(),
   destructible: makeMat('destr', 0.7, 0.5, 0.3),
   spawner: (() => { const m = makeMat('spawn', 0.8, 0.2, 0.8); m.emissiveColor = new BABYLON.Color3(0.2, 0, 0.2); return m; })(),
+  powerup: (() => { const m = makeMat('pu', 1, 0.85, 0, 0.9); m.emissiveColor = new BABYLON.Color3(0.4, 0.3, 0); return m; })(),
   cursor: makeMat('cur', 1, 1, 0, 0.35),
   select: (() => { const m = makeMat('sel', 1, 0.84, 0, 0.5); m.wireframe = true; return m; })(),
   zip: makeMat('zip', 0.5, 0.5, 0.6),
@@ -249,7 +251,7 @@ function getToolLayer(t) {
   const map = {
     floor: 'floor', wall: 'wall', endzone: 'endzone', letterzone: 'letterzone',
     sticky: 'sticky', ice: 'ice', ramp: 'ramp', impulse: 'impulse', moving: 'moving',
-    destructible: 'destructible', spawner: 'spawner'
+    destructible: 'destructible', spawner: 'spawner', powerup: 'powerup'
   };
   return map[t] || null;
 }
@@ -259,7 +261,7 @@ function getToolMat(t) {
     floor: null, wall: mats.wall, endzone: mats.endzone,
     sticky: mats.sticky, ice: mats.ice, ramp: mats.ramp,
     impulse: mats.impulse, moving: mats.moving,
-    destructible: mats.destructible, spawner: mats.spawner
+    destructible: mats.destructible, spawner: mats.spawner, powerup: mats.powerup
   };
   return map[t] || null;
 }
@@ -429,7 +431,7 @@ window.addEventListener('keydown', (e) => {
   const k = e.key.toLowerCase();
   const toolMap = { v:'select', f:'floor', x:'erase', e:'endzone', w:'wall',
     l:'letterzone', z:'zipline', s:'sticky', i:'ice', r:'ramp', g:'impulse', m:'moving',
-    d:'destructible', p:'spawner' };
+    d:'destructible', p:'spawner', u:'powerup' };
   if (toolMap[k]) setTool(toolMap[k]);
   else if (e.key === 'Delete' && selected) {
     if (selected.type === 'zipline' && selected.index != null) {
@@ -481,7 +483,7 @@ function updatePanel() {
     floor: 'Floor Block', wall: 'Wall Block', endzone: 'End Zone Block',
     letterzone: 'Letter Zone Block', sticky: 'Sticky Block', ice: 'Ice Block',
     ramp: 'Ramp Block', impulse: 'Impulse Block', moving: 'Moving Block',
-    destructible: 'Breakable Block', spawner: 'Spawner'
+    destructible: 'Breakable Block', spawner: 'Spawner', powerup: 'Power-Up'
   };
   title.textContent = labels[selected.type] || 'Block';
 
@@ -694,6 +696,11 @@ function exportLevel() {
     }));
   }
 
+  // Power-ups
+  if (blocks.powerup.size > 0) {
+    config.powerUps = [...blocks.powerup.values()].map(e => ({ x: e.x, y: e.y, z: e.z }));
+  }
+
   if (zipLines.length) config.zipLines = zipLines.map(zl => ({ ...zl }));
   return config;
 }
@@ -793,6 +800,11 @@ function importLevel(config) {
       { objectType: s.objectType, interval: s.interval, velocity: s.velocity });
   }
 
+  // Power-ups
+  if (config.powerUps) {
+    for (const p of config.powerUps) addBlock('powerup', p.x, p.y, p.z, mats.powerup);
+  }
+
   // Zip lines
   if (config.zipLines) zipLines = config.zipLines.map(zl => ({ ...zl }));
   rebuildZipLines();
@@ -864,7 +876,7 @@ const BUILTIN_LEVELS = [
     floor: { type: 'default' }, endZone: { x: 12, z: 0, width: 4, depth: 4 },
     walls: [{ x: 6, z: 0, width: 1, height: 3, depth: 10 }] },
   { name: 'Level 3', hint: 'The goal is in the air!',
-    floor: { type: 'default' }, endZone: { x: 10, z: 0, width: 4, depth: 4, elevation: 4 } },
+    floor: { type: 'default' }, endZone: { x: 10, z: 0, width: 4, depth: 4, elevation: 8 } },
   { name: 'Level 4', hint: 'Two islands!',
     floor: { type: 'regions', regions: [
       { xMin: -8, xMax: 5, zMin: -5, zMax: 5, y: 0 },

@@ -1,7 +1,7 @@
 import { getRandomWord, isValidWord, getWordTypes, isVerb, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v5.6.0';
+const VERSION = 'v5.7.0';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -1111,6 +1111,334 @@ function updateSpawners(time) {
   }
 }
 
+// ── Power-up pickups ──
+const powerUps = [];
+let _puSelectedLetter = null;
+let _puSelectedCube = null;
+
+function addPowerUp(x, y, z) {
+  const mesh = BABYLON.MeshBuilder.CreateBox('powerup', { size: 0.8 }, scene);
+  const mat = _matte(new BABYLON.StandardMaterial('puMat', scene));
+  mat.diffuseColor = new BABYLON.Color3(1, 0.85, 0);
+  mat.emissiveColor = new BABYLON.Color3(0.4, 0.3, 0);
+  mat.alpha = 0.9;
+  mesh.material = mat;
+  mesh.position.set(x + 0.5, y + 0.5, z + 0.5);
+  if (shadowGen) { shadowGen.addShadowCaster(mesh); }
+  mesh.isPickable = false;
+  levelObstacles.push(mesh);
+  powerUps.push({ mesh, x, y, z, collected: false });
+  return mesh;
+}
+
+function updatePowerUps(time) {
+  for (const pu of powerUps) {
+    if (pu.collected) continue;
+    // Hover + rotate animation
+    pu.mesh.position.y = pu.y + 0.5 + Math.sin(time * 2) * 0.2;
+    pu.mesh.rotation.y = time * 1.5;
+
+    // Check if any structure cube is touching
+    for (const c of cubes) {
+      const dx = c.mesh.position.x - pu.mesh.position.x;
+      const dy = c.mesh.position.y - pu.mesh.position.y;
+      const dz = c.mesh.position.z - pu.mesh.position.z;
+      if (Math.sqrt(dx * dx + dy * dy + dz * dz) < 1.2) {
+        pu.collected = true;
+        pu.mesh.setEnabled(false);
+        showPowerUpModal();
+        return;
+      }
+    }
+  }
+}
+
+function showPowerUpModal() {
+  const modal = document.getElementById('powerup-modal');
+  const lettersDiv = document.getElementById('powerup-letters');
+  lettersDiv.innerHTML = '';
+  _puSelectedCube = null;
+
+  // Show all unique letters in the structure
+  const seen = new Set();
+  for (const c of cubes) {
+    if (seen.has(c.letter)) continue;
+    seen.add(c.letter);
+    const btn = document.createElement('div');
+    btn.className = 'pu-letter';
+    btn.textContent = c.letter;
+    btn.addEventListener('click', () => {
+      lettersDiv.querySelectorAll('.pu-letter').forEach(b => b.classList.remove('selected'));
+      btn.classList.add('selected');
+      _puSelectedLetter = c.letter;
+    });
+    lettersDiv.appendChild(btn);
+  }
+
+  modal.classList.remove('hidden');
+
+  // Handle type buttons
+  document.querySelectorAll('.pu-btn').forEach(btn => {
+    btn.onclick = () => {
+      if (!_puSelectedLetter) { showMessage('Select a letter first!'); return; }
+      const type = btn.dataset.type;
+      applyPowerUp(_puSelectedLetter, type);
+      modal.classList.add('hidden');
+    };
+  });
+}
+
+function applyPowerUp(letter, type) {
+  const target = cubes.find(c => c.letter === letter);
+  if (!target) return;
+
+  showMessage(`${letter} transformed into ${type.toUpperCase()}!`, '#ffd700');
+  audio.place();
+
+  // Remove old mesh material, apply new visual
+  const pos = target.mesh.position.clone();
+
+  if (type === 'wheel') {
+    // Replace visually — make it look like a wheel
+    const wheelMat = _matte(new BABYLON.StandardMaterial('wheelM', scene));
+    wheelMat.diffuseColor = new BABYLON.Color3(0.3, 0.3, 0.3);
+    target.mesh.material = wheelMat;
+    // Reduce friction on this cube's aggregate
+    if (target.aggregate && target.aggregate.shape) {
+      target.aggregate.shape.material = { friction: 0.01, restitution: 0.5 };
+    }
+    target._powerUp = 'wheel';
+  } else if (type === 'thruster') {
+    const mat = _matte(new BABYLON.StandardMaterial('thrustM', scene));
+    mat.diffuseColor = new BABYLON.Color3(0.2, 0.4, 1);
+    mat.emissiveColor = new BABYLON.Color3(0.1, 0.2, 0.8);
+    target.mesh.material = mat;
+    target._powerUp = 'thruster';
+  } else if (type === 'bomb') {
+    const mat = _matte(new BABYLON.StandardMaterial('bombM', scene));
+    mat.diffuseColor = new BABYLON.Color3(0.2, 0.2, 0.2);
+    mat.emissiveColor = new BABYLON.Color3(0.3, 0, 0);
+    target.mesh.material = mat;
+    target._powerUp = 'bomb';
+    target._bombTimer = 3.0; // seconds until detonation
+  } else if (type === 'spring') {
+    const mat = _matte(new BABYLON.StandardMaterial('springM', scene));
+    mat.diffuseColor = new BABYLON.Color3(0, 0.9, 0.4);
+    mat.emissiveColor = new BABYLON.Color3(0, 0.2, 0.1);
+    target.mesh.material = mat;
+    target._powerUp = 'spring';
+  }
+}
+
+function updatePowerUpEffects(dt) {
+  for (const c of cubes) {
+    if (!c._powerUp || !c.aggregate) continue;
+
+    if (c._powerUp === 'thruster') {
+      // Constant upward force
+      c.aggregate.body.applyForce(
+        new BABYLON.Vector3(0, 15, 0), c.mesh.position);
+    } else if (c._powerUp === 'bomb') {
+      c._bombTimer -= dt;
+      // Flash red
+      if (c._bombTimer < 1.5) {
+        const flash = Math.sin(c._bombTimer * 15) > 0;
+        c.mesh.material.emissiveColor = flash
+          ? new BABYLON.Color3(1, 0, 0) : new BABYLON.Color3(0.3, 0, 0);
+      }
+      if (c._bombTimer <= 0) {
+        // EXPLODE
+        const pos = c.mesh.position.clone();
+        // Push all nearby cubes
+        for (const other of cubes) {
+          if (other === c || !other.aggregate) continue;
+          const dp = other.mesh.position.subtract(pos);
+          const dist = dp.length();
+          if (dist < 5) {
+            const force = dp.normalize().scale(40 / Math.max(dist, 0.5));
+            other.aggregate.body.applyImpulse(force, other.mesh.position);
+          }
+        }
+        // Destroy nearby destructible blocks
+        for (const obs of levelObstacles) {
+          if (obs.metadata && obs.metadata.destructible) {
+            const dp = obs.position.subtract(pos);
+            if (dp.length() < 4) {
+              obs.metadata.health--;
+              if (obs.metadata.health <= 0) {
+                if (obs.metadata.agg) obs.metadata.agg.dispose();
+                obs.dispose();
+              }
+            }
+          }
+        }
+        c._powerUp = null;
+        showMessage('BOOM!', '#ff4400');
+        audio.explode();
+      }
+    } else if (c._powerUp === 'spring') {
+      // Check if touching ground — bounce up
+      const vel = c.aggregate.body.getLinearVelocity();
+      if (c.mesh.position.y < 1.5 && vel.y < 0.5) {
+        c.aggregate.body.applyImpulse(
+          new BABYLON.Vector3(0, 20, 0), c.mesh.position);
+      }
+    }
+  }
+}
+
+// ── Word Challenge System ──
+// NYT-inspired word mechanics that reward specific word patterns
+const WORD_CATEGORIES = {
+  animals: ['CAT', 'DOG', 'FISH', 'BIRD', 'BEAR', 'WOLF', 'DEER', 'LION', 'HAWK', 'DUCK',
+    'FROG', 'GOAT', 'HORSE', 'MOUSE', 'SNAKE', 'TIGER', 'WHALE', 'ZEBRA', 'EAGLE', 'SHARK',
+    'CRAB', 'SEAL', 'CROW', 'DOVE', 'LAMB', 'MULE', 'SWAN', 'TOAD', 'WORM', 'CRANE',
+    'MOOSE', 'OTTER', 'PANDA', 'RAVEN', 'STORK', 'TROUT', 'VIPER', 'BISON', 'CAMEL',
+    'GECKO', 'HERON', 'KOALA', 'LLAMA', 'NEWT', 'OXEN', 'QUAIL', 'ROBIN', 'SNAIL'],
+  colors: ['RED', 'BLUE', 'GREEN', 'BLACK', 'WHITE', 'BROWN', 'GOLD', 'GREY', 'PINK',
+    'AMBER', 'BEIGE', 'CORAL', 'IVORY', 'LILAC', 'MAUVE', 'PEACH', 'RUST', 'SAGE',
+    'TEAL', 'CRIMSON', 'SCARLET', 'VIOLET', 'INDIGO', 'MAROON', 'OLIVE', 'SILVER',
+    'TAN', 'JADE', 'PLUM', 'ROSE', 'RUBY', 'SAND', 'WINE'],
+  food: ['CAKE', 'FISH', 'MEAT', 'RICE', 'SOUP', 'BREAD', 'FRUIT', 'GRAPE', 'LEMON',
+    'MANGO', 'OLIVE', 'PEACH', 'PIZZA', 'ROAST', 'SALAD', 'STEAK', 'TOAST', 'WHEAT',
+    'APPLE', 'BERRY', 'CANDY', 'CREAM', 'HONEY', 'JUICE', 'PASTA', 'SAUCE', 'SPICE',
+    'SUGAR', 'TACO', 'CORN', 'BEAN', 'PLUM', 'PEAR', 'LIME', 'NUT', 'PIE', 'JAM'],
+  nature: ['TREE', 'ROCK', 'HILL', 'LAKE', 'RAIN', 'SNOW', 'WIND', 'CAVE', 'LEAF',
+    'MOON', 'STAR', 'DAWN', 'DUSK', 'DUST', 'FIRE', 'CLAY', 'COAL', 'DIRT', 'SAND',
+    'WAVE', 'POND', 'REEF', 'PEAK', 'VALE', 'GLEN', 'COVE', 'RIDGE', 'STORM', 'FROST',
+    'FLAME', 'STONE', 'CLOUD', 'BROOK', 'CREEK', 'FIELD', 'MARSH', 'OCEAN', 'RIVER'],
+  body: ['ARM', 'EAR', 'EYE', 'JAW', 'LEG', 'LIP', 'RIB', 'TOE', 'BACK', 'BONE',
+    'CHIN', 'FACE', 'FOOT', 'HAIR', 'HAND', 'HEAD', 'HEEL', 'KNEE', 'LUNG', 'NAIL',
+    'NECK', 'NOSE', 'PALM', 'SHIN', 'SKIN', 'VEIN', 'WRIST', 'BRAIN', 'CHEST',
+    'ELBOW', 'HEART', 'MOUTH', 'NERVE', 'SKULL', 'SPINE', 'THUMB', 'WAIST'],
+};
+
+// Anagram solver
+function isAnagram(word, target) {
+  if (word.length !== target.length) return false;
+  const a = word.split('').sort().join('');
+  const b = target.split('').sort().join('');
+  return a === b;
+}
+
+function scrambleWord(word) {
+  const arr = word.split('');
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  // Make sure it's actually scrambled
+  const result = arr.join('');
+  if (result === word && word.length > 2) return scrambleWord(word);
+  return result;
+}
+
+// Challenge state
+let activeChallenge = null;
+let chainLastLetter = null;
+let wordsPlacedCount = 0;
+
+const CHALLENGE_TYPES = [
+  { type: 'category', weight: 3 },
+  { type: 'chain', weight: 2 },
+  { type: 'minLength', weight: 2 },
+  { type: 'anagram', weight: 2 },
+  { type: 'startsWith', weight: 1 },
+];
+
+function pickChallenge() {
+  const total = CHALLENGE_TYPES.reduce((s, c) => s + c.weight, 0);
+  let r = Math.random() * total;
+  for (const ct of CHALLENGE_TYPES) {
+    r -= ct.weight;
+    if (r <= 0) return ct.type;
+  }
+  return 'category';
+}
+
+function generateChallenge() {
+  const type = pickChallenge();
+  const challengeEl = document.getElementById('word-challenge');
+  const labelEl = document.getElementById('challenge-label');
+  const bonusEl = document.getElementById('challenge-bonus');
+
+  if (type === 'category') {
+    const cats = Object.keys(WORD_CATEGORIES);
+    const cat = cats[Math.floor(Math.random() * cats.length)];
+    activeChallenge = { type: 'category', category: cat, words: WORD_CATEGORIES[cat], bonus: 2.0 };
+    labelEl.textContent = `CHALLENGE: Use a ${cat.toUpperCase()} word!`;
+    bonusEl.textContent = '2x force bonus';
+  } else if (type === 'chain') {
+    if (chainLastLetter) {
+      activeChallenge = { type: 'chain', letter: chainLastLetter, bonus: 1.5 };
+      labelEl.textContent = `CHAIN: Start with "${chainLastLetter}"`;
+      bonusEl.textContent = '1.5x force bonus';
+    } else {
+      // No chain yet, pick a different challenge
+      return generateChallenge();
+    }
+  } else if (type === 'minLength') {
+    const len = 5 + Math.floor(Math.random() * 3); // 5-7
+    activeChallenge = { type: 'minLength', length: len, bonus: 1.5 + (len - 5) * 0.5 };
+    labelEl.textContent = `CHALLENGE: Use a ${len}+ letter word!`;
+    bonusEl.textContent = `${activeChallenge.bonus}x force bonus`;
+  } else if (type === 'anagram') {
+    // Pick a random valid word to scramble
+    const pool = ['STONE', 'CRANE', 'BLAZE', 'FROST', 'PLANT', 'WORLD', 'PRISM',
+      'FLINT', 'EMBER', 'RIDGE', 'SPEAR', 'ORBIT', 'NERVE', 'HOUSE', 'IVORY',
+      'GRASP', 'CRUST', 'VIGOR', 'WHEAT', 'TRAIL', 'GLOBE', 'HASTE', 'LUCID'];
+    const target = pool[Math.floor(Math.random() * pool.length)];
+    const scrambled = scrambleWord(target);
+    activeChallenge = { type: 'anagram', target, scrambled, bonus: 3.0 };
+    labelEl.textContent = `ANAGRAM: Unscramble "${scrambled}"`;
+    bonusEl.textContent = '3x force bonus!';
+  } else if (type === 'startsWith') {
+    const letters = 'ABCDEFGHIJKLMNOPRSTUVW';
+    const letter = letters[Math.floor(Math.random() * letters.length)];
+    activeChallenge = { type: 'startsWith', letter, bonus: 1.3 };
+    labelEl.textContent = `CHALLENGE: Start with "${letter}"`;
+    bonusEl.textContent = '1.3x force bonus';
+  }
+
+  challengeEl.classList.remove('hidden');
+}
+
+function checkChallenge(word) {
+  if (!activeChallenge) return 1.0;
+  const w = word.toUpperCase();
+  let matched = false;
+
+  switch (activeChallenge.type) {
+    case 'category':
+      matched = activeChallenge.words.includes(w);
+      break;
+    case 'chain':
+      matched = w.startsWith(activeChallenge.letter);
+      break;
+    case 'minLength':
+      matched = w.length >= activeChallenge.length;
+      break;
+    case 'anagram':
+      matched = isAnagram(w, activeChallenge.target);
+      break;
+    case 'startsWith':
+      matched = w.startsWith(activeChallenge.letter);
+      break;
+  }
+
+  if (matched) {
+    showMessage(`CHALLENGE COMPLETE! ${activeChallenge.bonus}x force!`, '#ffd700');
+    const bonus = activeChallenge.bonus;
+    activeChallenge = null;
+    document.getElementById('word-challenge').classList.add('hidden');
+    // Generate next challenge after a delay
+    setTimeout(() => { if (!levelComplete) generateChallenge(); }, 3000);
+    return bonus;
+  }
+
+  return 1.0;
+}
+
 // ── Selection highlight ──
 function highlightCube(cube) {
   clearHighlight();
@@ -1617,10 +1945,37 @@ function submitWord() {
   wordInput.value = '';
   if (levelComplete) return;
 
+  // Word challenge check
+  const forceMultiplier = checkChallenge(text);
+  chainLastLetter = text[text.length - 1];
+  wordsPlacedCount++;
+
   const wordIdx = words.length;
   placeWord(text, startGx, startGz, dir, wordIdx, true, startGy);
   lettersUsed += text.length;
-  showMessage(`"${text}" placed (${lettersUsed} letters used)`, '#aaddff');
+
+  // Apply bonus impulse if challenge was completed
+  if (forceMultiplier > 1.0) {
+    const impulseDir = dirToVec(dir);
+    const force = impulseDir.scale(text.length * forceMultiplier * 3);
+    setTimeout(() => {
+      for (const c of cubes) {
+        if (c.aggregate && c.aggregate.body) {
+          c.aggregate.body.applyImpulse(force.scale(1 / cubes.length), c.mesh.position);
+        }
+      }
+    }, text.length * 120 + 200); // After all letters land
+  }
+
+  if (forceMultiplier <= 1.0) {
+    showMessage(`"${text}" placed (${lettersUsed} letters used)`, '#aaddff');
+  }
+
+  // Generate next challenge every 2 words
+  if (wordsPlacedCount >= 2 && !activeChallenge) {
+    setTimeout(() => { if (!levelComplete) generateChallenge(); }, 1500);
+  }
+
   advanceTutorial('place');
 }
 
@@ -1683,7 +2038,7 @@ const BUILTIN_LEVELS = [
   { // Level 3
     name: 'Level 3', hint: 'The goal is in the air! Build upward momentum!',
     floor: { type: 'default' },
-    endZone: { x: 10, z: 0, width: 4, depth: 4, elevation: 4 },
+    endZone: { x: 10, z: 0, width: 4, depth: 4, elevation: 8 },
   },
   { // Level 4
     name: 'Level 4', hint: 'Two islands! Bridge the gap or launch across!',
@@ -1797,6 +2152,9 @@ function loadLevelFromConfig(config) {
 
   // Spawners
   for (const s of (config.spawners || [])) addSpawner(s.x, s.y, s.z, s.objectType, s.interval, s.velocity);
+
+  // Power-ups
+  for (const p of (config.powerUps || [])) addPowerUp(p.x, p.y, p.z);
 }
 
 // ── Start level ──
@@ -1832,6 +2190,12 @@ function startLevel() {
   letterZones.length = 0;
   movingPlatforms.length = 0;
   impulseBlocks.length = 0;
+  powerUps.length = 0;
+  activeChallenge = null;
+  chainLastLetter = null;
+  wordsPlacedCount = 0;
+  document.getElementById('word-challenge').classList.add('hidden');
+  document.getElementById('powerup-modal').classList.add('hidden');
   // Clean up spawner objects
   for (const s of spawnerTimers) {
     for (const obj of s.spawned) { obj.agg.dispose(); obj.mesh.dispose(); }
@@ -2214,6 +2578,8 @@ scene.registerBeforeRender(() => {
   updateMovingPlatforms(dt);
   updateImpulseBlocks();
   updateSpawners(time);
+  updatePowerUps(time);
+  updatePowerUpEffects(dt);
   audio.setMusicIntensity(cubes.length);
   updatePhysics();
   updateCamera();

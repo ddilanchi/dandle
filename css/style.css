@@ -762,3 +762,107 @@ body {
   pointer-events: none;
   font-family: monospace;
 }
+
+/* Word Challenge */
+#word-challenge {
+  margin-top: 6px;
+  text-align: center;
+  pointer-events: none;
+}
+#word-challenge.hidden { display: none; }
+#challenge-label {
+  font-size: 13px;
+  color: #ffd700;
+  font-weight: bold;
+  text-shadow: 0 0 8px rgba(255, 215, 0, 0.5);
+}
+#challenge-bonus {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+/* Power-up Modal */
+#powerup-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+}
+#powerup-modal.hidden { display: none; }
+#powerup-inner {
+  background: #1a1a2e;
+  border: 2px solid #ffd700;
+  border-radius: 12px;
+  padding: 24px;
+  text-align: center;
+  max-width: 500px;
+  color: #fff;
+}
+#powerup-inner h2 {
+  color: #ffd700;
+  margin-bottom: 8px;
+  font-size: 22px;
+  letter-spacing: 2px;
+}
+#powerup-desc {
+  color: rgba(255,255,255,0.7);
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+#powerup-letters {
+  display: flex;
+  gap: 6px;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+#powerup-letters .pu-letter {
+  width: 40px; height: 40px;
+  background: #f5ecd7;
+  color: #222;
+  font-weight: bold;
+  font-size: 18px;
+  border: 2px solid #999;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+#powerup-letters .pu-letter:hover {
+  border-color: #ffd700;
+  background: #fff8dc;
+}
+#powerup-letters .pu-letter.selected {
+  border-color: #ffd700;
+  background: #ffd700;
+  color: #000;
+}
+#powerup-types {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+.pu-btn {
+  background: rgba(255,255,255,0.1);
+  border: 1px solid rgba(255,255,255,0.3);
+  color: #fff;
+  padding: 12px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 14px;
+  font-family: inherit;
+  min-width: 100px;
+}
+.pu-btn:hover {
+  background: rgba(255, 215, 0, 0.2);
+  border-color: #ffd700;
+}
+.pu-btn small {
+  color: rgba(255,255,255,0.5);
+  font-size: 10px;
+}

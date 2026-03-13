@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Dandle</title>
-  <link rel="stylesheet" href="css/style.css?v=5.6.0">
+  <link rel="stylesheet" href="css/style.css?v=5.7.0">
   <script src="https://cdn.babylonjs.com/babylon.js"></script>
   <script src="https://cdn.babylonjs.com/havok/HavokPhysics_umd.js"></script>
 </head>
@@ -23,6 +23,23 @@
       <button id="submit-word">Place</button>
     </div>
     <div id="message"></div>
+    <div id="word-challenge" class="hidden">
+      <div id="challenge-label"></div>
+      <div id="challenge-bonus"></div>
+    </div>
+  </div>
+  <div id="powerup-modal" class="hidden">
+    <div id="powerup-inner">
+      <h2>POWER-UP!</h2>
+      <p id="powerup-desc">Choose a letter to transform:</p>
+      <div id="powerup-letters"></div>
+      <div id="powerup-types">
+        <button class="pu-btn" data-type="wheel">Wheel<br><small>Rolling mobility</small></button>
+        <button class="pu-btn" data-type="thruster">Thruster<br><small>Upward boost</small></button>
+        <button class="pu-btn" data-type="bomb">Bomb<br><small>Explodes nearby</small></button>
+        <button class="pu-btn" data-type="spring">Spring<br><small>Bounces up</small></button>
+      </div>
+    </div>
   </div>
   <div id="verb-legend" class="hidden">
     <span class="arrow-icon">&rarr;</span> Verbs apply force in their direction
@@ -123,6 +140,6 @@
       }
     });
   </script>
-  <script type="module" src="js/game.js?v=5.6.0"></script>
+  <script type="module" src="js/game.js?v=5.7.0"></script>
 </body>
 </html>

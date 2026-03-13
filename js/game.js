@@ -1,7 +1,7 @@
 import { getRandomWord, isValidWord, getWordTypes, isVerb, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v5.5.0';
+const VERSION = 'v5.6.0';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -174,6 +174,9 @@ const letterZones = [];
 const debrisPieces = [];
 const floorMeshes = [];
 const floorAggregates = [];
+const movingPlatforms = [];
+const impulseBlocks = [];
+const spawnerTimers = [];
 
 // ── Animation / placement queues ──
 const animations = [];
@@ -843,6 +846,271 @@ function getZoneAt(wx, wz) {
   return null;
 }
 
+// ── Sticky blocks (high friction) ──
+function addStickyBlock(x, y, z) {
+  const mesh = BABYLON.MeshBuilder.CreateBox('sticky', { size: 1 }, scene);
+  const mat = _matte(new BABYLON.StandardMaterial('stickyMat', scene));
+  mat.diffuseColor = new BABYLON.Color3(0.9, 0.7, 0.1);
+  mat.emissiveColor = new BABYLON.Color3(0.15, 0.1, 0);
+  mesh.material = mat;
+  mesh.position.set(x + 0.5, y + 0.5, z + 0.5);
+  if (shadowGen) { shadowGen.addShadowCaster(mesh); mesh.receiveShadows = true; }
+  mesh.isPickable = false;
+  levelObstacles.push(mesh);
+  const agg = new BABYLON.PhysicsAggregate(mesh, BABYLON.PhysicsShapeType.BOX, {
+    mass: 0, friction: 3.0, restitution: 0.01 }, scene);
+  setCollisionFiltering(agg, CG_GROUND, CG_STRUCTURE | CG_FLYING | CG_DEBRIS);
+  return mesh;
+}
+
+// ── Ice blocks (very low friction) ──
+function addIceBlock(x, y, z) {
+  const mesh = BABYLON.MeshBuilder.CreateBox('ice', { size: 1 }, scene);
+  const mat = _matte(new BABYLON.StandardMaterial('iceMat', scene));
+  mat.diffuseColor = new BABYLON.Color3(0.7, 0.9, 1.0);
+  mat.emissiveColor = new BABYLON.Color3(0.1, 0.15, 0.2);
+  mat.alpha = 0.85;
+  mat.specularColor = new BABYLON.Color3(1, 1, 1);
+  mat.specularPower = 64;
+  mesh.material = mat;
+  mesh.position.set(x + 0.5, y + 0.5, z + 0.5);
+  if (shadowGen) { shadowGen.addShadowCaster(mesh); mesh.receiveShadows = true; }
+  mesh.isPickable = false;
+  levelObstacles.push(mesh);
+  const agg = new BABYLON.PhysicsAggregate(mesh, BABYLON.PhysicsShapeType.BOX, {
+    mass: 0, friction: 0.02, restitution: 0.1 }, scene);
+  setCollisionFiltering(agg, CG_GROUND, CG_STRUCTURE | CG_FLYING | CG_DEBRIS);
+  return mesh;
+}
+
+// ── Ramp blocks (angled surfaces) ──
+function _dirToVec(dir) {
+  if (dir === '+x') return new BABYLON.Vector3(1, 0, 0);
+  if (dir === '-x') return new BABYLON.Vector3(-1, 0, 0);
+  if (dir === '+z') return new BABYLON.Vector3(0, 0, 1);
+  if (dir === '-z') return new BABYLON.Vector3(0, 0, -1);
+  if (dir === '+y') return new BABYLON.Vector3(0, 1, 0);
+  if (dir === '-y') return new BABYLON.Vector3(0, -1, 0);
+  return new BABYLON.Vector3(1, 0, 0);
+}
+
+function _dirToRotY(dir) {
+  if (dir === '+x') return 0;
+  if (dir === '-x') return Math.PI;
+  if (dir === '+z') return -Math.PI / 2;
+  if (dir === '-z') return Math.PI / 2;
+  return 0;
+}
+
+function addRamp(x, y, z, slope, direction) {
+  const ratio = slope === '2:1' ? 0.5 : 1.0;
+  const tiltAngle = Math.atan(ratio);
+  const rotY = _dirToRotY(direction);
+
+  // Wedge approximation: tilted box
+  const mesh = BABYLON.MeshBuilder.CreateBox('ramp', { width: 1, height: 0.15, depth: 1 }, scene);
+  const mat = _matte(new BABYLON.StandardMaterial('rampMat', scene));
+  mat.diffuseColor = new BABYLON.Color3(0.55, 0.55, 0.45);
+  mesh.material = mat;
+  mesh.position.set(x + 0.5, y + 0.25, z + 0.5);
+
+  // Tilt along the local X axis after rotating Y
+  mesh.rotation.y = rotY;
+  mesh.rotation.z = tiltAngle;
+
+  if (shadowGen) { shadowGen.addShadowCaster(mesh); mesh.receiveShadows = true; }
+  mesh.isPickable = false;
+  levelObstacles.push(mesh);
+
+  const agg = new BABYLON.PhysicsAggregate(mesh, BABYLON.PhysicsShapeType.BOX, {
+    mass: 0, friction: STATIC_FRICTION * 0.5, restitution: 0.02 }, scene);
+  setCollisionFiltering(agg, CG_GROUND, CG_STRUCTURE | CG_FLYING | CG_DEBRIS);
+  return mesh;
+}
+
+// ── Impulse blocks (apply force on contact) ──
+function addImpulseBlock(x, y, z, direction, strength) {
+  const mesh = BABYLON.MeshBuilder.CreateBox('impulse', { size: 1 }, scene);
+  const mat = _matte(new BABYLON.StandardMaterial('impulseMat', scene));
+  mat.diffuseColor = new BABYLON.Color3(1, 0.5, 0);
+  mat.emissiveColor = new BABYLON.Color3(0.3, 0.1, 0);
+  mesh.material = mat;
+  mesh.position.set(x + 0.5, y + 0.5, z + 0.5);
+  if (shadowGen) { shadowGen.addShadowCaster(mesh); mesh.receiveShadows = true; }
+  mesh.isPickable = false;
+  levelObstacles.push(mesh);
+
+  const agg = new BABYLON.PhysicsAggregate(mesh, BABYLON.PhysicsShapeType.BOX, {
+    mass: 0, friction: STATIC_FRICTION, restitution: 0.02 }, scene);
+  setCollisionFiltering(agg, CG_GROUND, CG_STRUCTURE | CG_FLYING | CG_DEBRIS);
+
+  // Add directional arrow indicator
+  const arrowMat = _matte(new BABYLON.StandardMaterial('impArrow', scene));
+  arrowMat.diffuseColor = new BABYLON.Color3(1, 1, 0);
+  arrowMat.emissiveColor = new BABYLON.Color3(0.5, 0.5, 0);
+  const arrow = BABYLON.MeshBuilder.CreateCylinder('impArrow', {
+    diameterTop: 0, diameterBottom: 0.3, height: 0.4, tessellation: 8 }, scene);
+  arrow.material = arrowMat;
+  arrow.parent = mesh;
+  const dv = _dirToVec(direction);
+  arrow.position.set(dv.x * 0.45, dv.y * 0.45, dv.z * 0.45);
+  // Point arrow in direction
+  if (dv.y > 0.5) arrow.rotation.set(0, 0, 0);
+  else if (dv.y < -0.5) arrow.rotation.set(Math.PI, 0, 0);
+  else {
+    const angle = Math.atan2(dv.x, dv.z);
+    arrow.rotation.set(Math.PI / 2, 0, -angle);
+  }
+  arrow.isPickable = false;
+
+  impulseBlocks.push({ mesh, direction, strength: strength || 10, dirVec: dv });
+  return mesh;
+}
+
+// ── Moving blocks (oscillating platforms) ──
+function addMovingBlock(x, y, z, direction, distance, speed) {
+  const mesh = BABYLON.MeshBuilder.CreateBox('moving', { size: 1 }, scene);
+  const mat = _matte(new BABYLON.StandardMaterial('movingMat', scene));
+  mat.diffuseColor = new BABYLON.Color3(0.3, 0.8, 0.3);
+  mat.emissiveColor = new BABYLON.Color3(0.05, 0.15, 0.05);
+  mesh.material = mat;
+  mesh.position.set(x + 0.5, y + 0.5, z + 0.5);
+  if (shadowGen) { shadowGen.addShadowCaster(mesh); mesh.receiveShadows = true; }
+  mesh.isPickable = false;
+  levelObstacles.push(mesh);
+
+  const startPos = mesh.position.clone();
+  const dv = _dirToVec(direction);
+  const endPos = startPos.add(dv.scale(distance));
+
+  const agg = new BABYLON.PhysicsAggregate(mesh, BABYLON.PhysicsShapeType.BOX, {
+    mass: 0, friction: STATIC_FRICTION, restitution: 0.02 }, scene);
+  setCollisionFiltering(agg, CG_GROUND, CG_STRUCTURE | CG_FLYING | CG_DEBRIS);
+  // Make kinematic so we can move it
+  agg.body.setMotionType(BABYLON.PhysicsMotionType.ANIMATED);
+
+  movingPlatforms.push({ mesh, agg, startPos, endPos, speed: speed || 2, phase: 0 });
+  return mesh;
+}
+
+// ── Destructible blocks (break on high force / explosion) ──
+function addDestructibleBlock(x, y, z) {
+  const mesh = BABYLON.MeshBuilder.CreateBox('destructible', { size: 1 }, scene);
+  const mat = _matte(new BABYLON.StandardMaterial('destrMat', scene));
+  mat.diffuseColor = new BABYLON.Color3(0.7, 0.5, 0.3);
+  mat.emissiveColor = new BABYLON.Color3(0.1, 0.05, 0);
+  mesh.material = mat;
+  mesh.position.set(x + 0.5, y + 0.5, z + 0.5);
+  if (shadowGen) { shadowGen.addShadowCaster(mesh); mesh.receiveShadows = true; }
+  mesh.isPickable = false;
+  levelObstacles.push(mesh);
+  const agg = new BABYLON.PhysicsAggregate(mesh, BABYLON.PhysicsShapeType.BOX, {
+    mass: 0, friction: STATIC_FRICTION, restitution: 0.02 }, scene);
+  setCollisionFiltering(agg, CG_GROUND, CG_STRUCTURE | CG_FLYING | CG_DEBRIS);
+  mesh.metadata = { destructible: true, health: 1, agg };
+  return mesh;
+}
+
+// ── Physics object spawners (periodically spawn physics objects) ──
+function addSpawner(x, y, z, objectType, interval, velocity) {
+  const mesh = BABYLON.MeshBuilder.CreateBox('spawner', { size: 0.8 }, scene);
+  const mat = _matte(new BABYLON.StandardMaterial('spawnMat', scene));
+  mat.diffuseColor = new BABYLON.Color3(0.8, 0.2, 0.8);
+  mat.emissiveColor = new BABYLON.Color3(0.2, 0, 0.2);
+  mesh.material = mat;
+  mesh.position.set(x + 0.5, y + 0.5, z + 0.5);
+  if (shadowGen) { shadowGen.addShadowCaster(mesh); }
+  mesh.isPickable = false;
+  levelObstacles.push(mesh);
+
+  const dv = velocity ? new BABYLON.Vector3(velocity.x || 0, velocity.y || 0, velocity.z || 0)
+                      : new BABYLON.Vector3(0, 3, 0);
+  const spawner = { mesh, objectType: objectType || 'ball', interval: interval || 5,
+                    lastSpawn: 0, spawnVelocity: dv, spawned: [] };
+  spawnerTimers.push(spawner);
+  return mesh;
+}
+
+function spawnPhysicsObject(spawner) {
+  const pos = spawner.mesh.position;
+  let objMesh, size;
+
+  if (spawner.objectType === 'boulder') {
+    size = 0.7 + Math.random() * 0.4;
+    objMesh = BABYLON.MeshBuilder.CreateBox('boulder_' + Math.random(), { size }, scene);
+    const mat = _matte(new BABYLON.StandardMaterial('boulderM', scene));
+    mat.diffuseColor = new BABYLON.Color3(0.4, 0.35, 0.3);
+    objMesh.material = mat;
+  } else {
+    // Default: ball
+    size = 0.4;
+    objMesh = BABYLON.MeshBuilder.CreateSphere('ball_' + Math.random(),
+      { diameter: size * 2, segments: 8 }, scene);
+    const mat = _matte(new BABYLON.StandardMaterial('ballM', scene));
+    mat.diffuseColor = new BABYLON.Color3(0.9, 0.3, 0.3);
+    objMesh.material = mat;
+  }
+
+  objMesh.position.set(pos.x, pos.y + 1, pos.z);
+  if (shadowGen) { shadowGen.addShadowCaster(objMesh); objMesh.receiveShadows = true; }
+  objMesh.isPickable = false;
+
+  const shapeType = spawner.objectType === 'boulder'
+    ? BABYLON.PhysicsShapeType.BOX : BABYLON.PhysicsShapeType.SPHERE;
+  const agg = new BABYLON.PhysicsAggregate(objMesh, shapeType, {
+    mass: 2, friction: 0.5, restitution: 0.3 }, scene);
+  setCollisionFiltering(agg, CG_DEBRIS, CG_GROUND | CG_STRUCTURE | CG_DEBRIS);
+  agg.body.setLinearVelocity(spawner.spawnVelocity);
+
+  spawner.spawned.push({ mesh: objMesh, agg, spawnTime: performance.now() / 1000 });
+  // Limit spawned objects
+  if (spawner.spawned.length > 10) {
+    const old = spawner.spawned.shift();
+    old.agg.dispose(); old.mesh.dispose();
+  }
+}
+
+// ── Update functions for new block types ──
+function updateMovingPlatforms(dt) {
+  for (const mp of movingPlatforms) {
+    mp.phase += dt * mp.speed;
+    const t = (Math.sin(mp.phase) + 1) / 2; // 0..1 oscillation
+    const newPos = BABYLON.Vector3.Lerp(mp.startPos, mp.endPos, t);
+    mp.mesh.position.copyFrom(newPos);
+    if (mp.agg && mp.agg.body) {
+      mp.agg.body.setTargetTransform(newPos, BABYLON.Quaternion.Identity());
+    }
+  }
+}
+
+function updateImpulseBlocks() {
+  for (const ib of impulseBlocks) {
+    const ibPos = ib.mesh.position;
+    for (const c of cubes) {
+      if (!c.aggregate) continue;
+      const cp = c.mesh.position;
+      const dx = cp.x - ibPos.x, dy = cp.y - ibPos.y, dz = cp.z - ibPos.z;
+      const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      if (dist < 1.2) {
+        const force = ib.dirVec.scale(ib.strength);
+        c.aggregate.body.applyImpulse(force, cp);
+      }
+    }
+  }
+}
+
+function updateSpawners(time) {
+  for (const s of spawnerTimers) {
+    if (time - s.lastSpawn >= s.interval) {
+      s.lastSpawn = time;
+      spawnPhysicsObject(s);
+    }
+    // Pulse animation
+    const pulse = 1 + Math.sin(time * 4) * 0.05;
+    s.mesh.scaling.set(pulse, pulse, pulse);
+  }
+}
+
 // ── Selection highlight ──
 function highlightCube(cube) {
   clearHighlight();
@@ -1508,6 +1776,27 @@ function loadLevelFromConfig(config) {
   for (const zl of (config.zipLines || [])) {
     addZipLine(zl.x1, zl.y1, zl.z1, zl.x2, zl.y2, zl.z2, zl.radius || 0.3);
   }
+
+  // Sticky blocks
+  for (const b of (config.stickyBlocks || [])) addStickyBlock(b.x, b.y, b.z);
+
+  // Ice blocks
+  for (const b of (config.iceBlocks || [])) addIceBlock(b.x, b.y, b.z);
+
+  // Ramps
+  for (const r of (config.ramps || [])) addRamp(r.x, r.y, r.z, r.slope || '1:1', r.direction || '+x');
+
+  // Impulse blocks
+  for (const b of (config.impulseBlocks || [])) addImpulseBlock(b.x, b.y, b.z, b.direction || '+x', b.strength || 10);
+
+  // Moving blocks
+  for (const b of (config.movingBlocks || [])) addMovingBlock(b.x, b.y, b.z, b.direction || '+x', b.distance || 5, b.speed || 2);
+
+  // Destructible blocks
+  for (const b of (config.destructibleBlocks || [])) addDestructibleBlock(b.x, b.y, b.z);
+
+  // Spawners
+  for (const s of (config.spawners || [])) addSpawner(s.x, s.y, s.z, s.objectType, s.interval, s.velocity);
 }
 
 // ── Start level ──
@@ -1541,6 +1830,13 @@ function startLevel() {
   for (const o of levelObstacles) o.dispose();
   levelObstacles.length = 0;
   letterZones.length = 0;
+  movingPlatforms.length = 0;
+  impulseBlocks.length = 0;
+  // Clean up spawner objects
+  for (const s of spawnerTimers) {
+    for (const obj of s.spawned) { obj.agg.dispose(); obj.mesh.dispose(); }
+  }
+  spawnerTimers.length = 0;
 
   // Remove debris
   for (const d of debrisPieces) {
@@ -1915,6 +2211,9 @@ scene.registerBeforeRender(() => {
 
   updateLetterZones();
   updateDirectionArrow();
+  updateMovingPlatforms(dt);
+  updateImpulseBlocks();
+  updateSpawners(time);
   audio.setMusicIntensity(cubes.length);
   updatePhysics();
   updateCamera();

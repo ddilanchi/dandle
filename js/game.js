@@ -1,7 +1,7 @@
 import { getRandomWord, isValidWord, getWordTypes, isVerb, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v5.3.6';
+const VERSION = 'v5.3.7';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -1218,14 +1218,20 @@ function _handleNavKey(key) {
 
   if (moveMap[key]) {
     const [mx, my, mz] = moveMap[key];
+    const sp = selectedCube.mesh.position;
+    console.log(`[NAV] key=${key} dir=(${mx},${my},${mz}) from=[${selectedCube.letter}] pos=(${sp.x.toFixed(1)},${sp.y.toFixed(1)},${sp.z.toFixed(1)}) cubes=${cubes.length}`);
     const neighbor = _findNavTarget(selectedCube, mx, my, mz);
     if (neighbor) {
+      const np = neighbor.mesh.position;
+      console.log(`[NAV] -> [${neighbor.letter}] pos=(${np.x.toFixed(1)},${np.y.toFixed(1)},${np.z.toFixed(1)})`);
       selectedCube = neighbor;
       highlightCube(neighbor);
       selectedInfoEl.textContent = `Selected: [${neighbor.letter}] at (${neighbor.gx}, ${neighbor.gz})`;
       audio.select();
       updateGhostPreview();
       advanceTutorial('navigate');
+    } else {
+      console.log('[NAV] -> no target found');
     }
     return true;
   }

@@ -1,7 +1,7 @@
 import { getRandomWord, isValidWord, getWordTypes, isVerb, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v5.4.2';
+const VERSION = 'v5.4.3';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -864,6 +864,9 @@ function highlightCube(cube) {
   mat.alpha = 0.3;
   selectedHighlight.material = mat;
   selectedHighlight.position.copyFrom(cube.mesh.position);
+  if (cube.mesh.rotationQuaternion) {
+    selectedHighlight.rotationQuaternion = cube.mesh.rotationQuaternion.clone();
+  }
   selectedHighlight.isPickable = false;
 }
 
@@ -959,6 +962,9 @@ function updateDirectionArrow() {
 
   if (selectedHighlight) {
     selectedHighlight.position.copyFrom(selectedCube.mesh.position);
+    if (selectedCube.mesh.rotationQuaternion) {
+      selectedHighlight.rotationQuaternion = selectedCube.mesh.rotationQuaternion.clone();
+    }
   }
 }
 
@@ -1709,6 +1715,9 @@ function updatePhysics() {
   // Update highlight position
   if (selectedHighlight && selectedCube) {
     selectedHighlight.position.copyFrom(selectedCube.mesh.position);
+    if (selectedCube.mesh.rotationQuaternion) {
+      selectedHighlight.rotationQuaternion = selectedCube.mesh.rotationQuaternion.clone();
+    }
   }
 
   // Fell off edge

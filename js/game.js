@@ -1,7 +1,7 @@
 import { getRandomWord, isValidWord, getWordTypes, isVerb, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v5.3.5';
+const VERSION = 'v5.3.6';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -1169,34 +1169,56 @@ function _getOpenFaces(cube) {
   });
 }
 
+function _findNavTarget(fromCube, dirX, dirY, dirZ) {
+  // Find the best cube to navigate to in the given world direction.
+  // Uses world positions so it works regardless of structure rotation.
+  // Score = forward_distance - 2 * perpendicular_distance
+  // Among cubes with positive forward distance, pick highest score (closest + most aligned).
+  const sp = fromCube.mesh.position;
+  let best = null;
+  let bestScore = -Infinity;
+
+  for (const c of cubes) {
+    if (c === fromCube) continue;
+    const cp = c.mesh.position;
+    const dx = cp.x - sp.x, dy = cp.y - sp.y, dz = cp.z - sp.z;
+
+    // Forward distance (projection onto direction)
+    const fwd = dx * dirX + dy * dirY + dz * dirZ;
+    if (fwd < 0.1) continue; // must be ahead of us
+
+    // Perpendicular distance squared
+    const totalDistSq = dx * dx + dy * dy + dz * dz;
+    const perpDistSq = totalDistSq - fwd * fwd;
+    const perpDist = Math.sqrt(Math.max(0, perpDistSq));
+
+    // Score: prefer close cubes that are well-aligned with direction
+    // Negative total distance (closer is better) with heavy penalty for off-axis
+    const score = -Math.sqrt(totalDistSq) - 2 * perpDist;
+
+    if (score > bestScore) {
+      bestScore = score;
+      best = c;
+    }
+  }
+  return best;
+}
+
+// Export for testing
+if (typeof window !== 'undefined') window._findNavTarget = _findNavTarget;
+
 function _handleNavKey(key) {
   if (!selectedCube) return false;
 
-  // World-position navigation: find nearest cube in the pressed direction
   const moveMap = {
-    'W': { x: 0, y: 0, z: -1 }, 'S': { x: 0, y: 0, z: 1 },
-    'A': { x: -1, y: 0, z: 0 }, 'D': { x: 1, y: 0, z: 0 },
-    'Q': { x: 0, y: 1, z: 0 }, 'E': { x: 0, y: -1, z: 0 },
+    'W': [0, 0, -1], 'S': [0, 0, 1],
+    'A': [-1, 0, 0], 'D': [1, 0, 0],
+    'Q': [0, 1, 0],  'E': [0, -1, 0],
   };
 
   if (moveMap[key]) {
-    const m = moveMap[key];
-    const dir = new BABYLON.Vector3(m.x, m.y, m.z);
-    const sp = selectedCube.mesh.position;
-
-    // Find the nearest cube whose world position is in the pressed direction
-    let neighbor = null;
-    let bestDist = Infinity;
-    for (const c of cubes) {
-      if (c === selectedCube) continue;
-      const cp = c.mesh.position;
-      const dx = cp.x - sp.x, dy = cp.y - sp.y, dz = cp.z - sp.z;
-      // Dot product: is this cube in the direction we pressed?
-      const dot = dx * dir.x + dy * dir.y + dz * dir.z;
-      if (dot < 0.3) continue; // must be at least slightly in that direction
-      const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
-      if (dist < bestDist) { bestDist = dist; neighbor = c; }
-    }
+    const [mx, my, mz] = moveMap[key];
+    const neighbor = _findNavTarget(selectedCube, mx, my, mz);
     if (neighbor) {
       selectedCube = neighbor;
       highlightCube(neighbor);

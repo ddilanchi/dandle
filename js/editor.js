@@ -86,7 +86,7 @@ const mats = {
   sticky: (() => { const m = makeMat('sticky', 0.9, 0.7, 0.1); m.emissiveColor = new BABYLON.Color3(0.2, 0.15, 0); return m; })(),
   ice: (() => { const m = makeMat('ice', 0.7, 0.9, 1.0, 0.8); m.emissiveColor = new BABYLON.Color3(0.1, 0.15, 0.2); m.specularColor = new BABYLON.Color3(1, 1, 1); return m; })(),
   ramp: makeMat('ramp', 0.55, 0.55, 0.45),
-  impulse: (() => { const m = makeMat('imp', 1, 0.5, 0, 0.9); m.emissiveColor = new BABYLON.Color3(0.3, 0.1, 0); return m; })(),
+  impulse: (() => { const m = makeMat('imp', 1, 0.5, 0, 0.3); m.emissiveColor = new BABYLON.Color3(0.5, 0.2, 0); return m; })(),
   moving: (() => { const m = makeMat('mov', 0.3, 0.8, 0.3); m.emissiveColor = new BABYLON.Color3(0.05, 0.2, 0.05); return m; })(),
   destructible: makeMat('destr', 0.7, 0.5, 0.3),
   spawner: (() => { const m = makeMat('spawn', 0.8, 0.2, 0.8); m.emissiveColor = new BABYLON.Color3(0.2, 0, 0.2); return m; })(),
@@ -609,7 +609,7 @@ function updatePanel() {
   }
 
   if (selected.type === 'spawner') {
-    addSelect(fields, 'Object', ['ball', 'boulder'], entry.objectType || 'ball', v => {
+    addSelect(fields, 'Object', ['ball', 'cube', 'boulder', 'cylinder', 'cone'], entry.objectType || 'ball', v => {
       entry.objectType = v; autoSave();
     });
     addField(fields, 'Interval (s)', 'number', entry.interval || 5, v => {

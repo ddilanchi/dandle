@@ -931,30 +931,27 @@ function addRamp(x, y, z, slope, direction) {
 // ── Impulse blocks (apply force on contact) ──
 function addImpulseBlock(x, y, z, direction, strength) {
   const mesh = BABYLON.MeshBuilder.CreateBox('impulse', { size: 1 }, scene);
-  const mat = _matte(new BABYLON.StandardMaterial('impulseMat', scene));
+  const mat = new BABYLON.StandardMaterial('impulseMat', scene);
   mat.diffuseColor = new BABYLON.Color3(1, 0.5, 0);
-  mat.emissiveColor = new BABYLON.Color3(0.3, 0.1, 0);
+  mat.emissiveColor = new BABYLON.Color3(0.5, 0.2, 0);
+  mat.alpha = 0.3;
   mesh.material = mat;
   mesh.position.set(x + 0.5, y + 0.5, z + 0.5);
-  if (shadowGen) { shadowGen.addShadowCaster(mesh); mesh.receiveShadows = true; }
   mesh.isPickable = false;
+  // No physics — purely a force field, things pass through
   levelObstacles.push(mesh);
 
-  const agg = new BABYLON.PhysicsAggregate(mesh, BABYLON.PhysicsShapeType.BOX, {
-    mass: 0, friction: STATIC_FRICTION, restitution: 0.02 }, scene);
-  setCollisionFiltering(agg, CG_GROUND, CG_STRUCTURE | CG_FLYING | CG_DEBRIS);
-
-  // Add directional arrow indicator
-  const arrowMat = _matte(new BABYLON.StandardMaterial('impArrow', scene));
+  // Directional arrow indicator
+  const arrowMat = new BABYLON.StandardMaterial('impArrow', scene);
   arrowMat.diffuseColor = new BABYLON.Color3(1, 1, 0);
-  arrowMat.emissiveColor = new BABYLON.Color3(0.5, 0.5, 0);
+  arrowMat.emissiveColor = new BABYLON.Color3(0.8, 0.6, 0);
+  arrowMat.alpha = 0.7;
   const arrow = BABYLON.MeshBuilder.CreateCylinder('impArrow', {
-    diameterTop: 0, diameterBottom: 0.3, height: 0.4, tessellation: 8 }, scene);
+    diameterTop: 0, diameterBottom: 0.35, height: 0.5, tessellation: 8 }, scene);
   arrow.material = arrowMat;
   arrow.parent = mesh;
   const dv = _dirToVec(direction);
-  arrow.position.set(dv.x * 0.45, dv.y * 0.45, dv.z * 0.45);
-  // Point arrow in direction
+  arrow.position.set(dv.x * 0.4, dv.y * 0.4, dv.z * 0.4);
   if (dv.y > 0.5) arrow.rotation.set(0, 0, 0);
   else if (dv.y < -0.5) arrow.rotation.set(Math.PI, 0, 0);
   else {
@@ -1033,37 +1030,73 @@ function addSpawner(x, y, z, objectType, interval, velocity) {
 
 function spawnPhysicsObject(spawner) {
   const pos = spawner.mesh.position;
-  let objMesh, size;
+  const id = Math.random().toString(36).slice(2, 6);
+  let objMesh, shapeType, mass = 2, friction = 0.5, restitution = 0.3;
 
-  if (spawner.objectType === 'boulder') {
-    size = 0.7 + Math.random() * 0.4;
-    objMesh = BABYLON.MeshBuilder.CreateBox('boulder_' + Math.random(), { size }, scene);
-    const mat = _matte(new BABYLON.StandardMaterial('boulderM', scene));
-    mat.diffuseColor = new BABYLON.Color3(0.4, 0.35, 0.3);
-    objMesh.material = mat;
-  } else {
-    // Default: ball
-    size = 0.4;
-    objMesh = BABYLON.MeshBuilder.CreateSphere('ball_' + Math.random(),
-      { diameter: size * 2, segments: 8 }, scene);
-    const mat = _matte(new BABYLON.StandardMaterial('ballM', scene));
-    mat.diffuseColor = new BABYLON.Color3(0.9, 0.3, 0.3);
-    objMesh.material = mat;
+  switch (spawner.objectType) {
+    case 'cube': {
+      const s = 0.5 + Math.random() * 0.3;
+      objMesh = BABYLON.MeshBuilder.CreateBox('cube_' + id, { size: s }, scene);
+      const mat = _matte(new BABYLON.StandardMaterial('cubeM_' + id, scene));
+      mat.diffuseColor = new BABYLON.Color3(0.3 + Math.random() * 0.5, 0.3 + Math.random() * 0.5, 0.3 + Math.random() * 0.5);
+      objMesh.material = mat;
+      shapeType = BABYLON.PhysicsShapeType.BOX;
+      break;
+    }
+    case 'boulder': {
+      const s = 0.7 + Math.random() * 0.4;
+      objMesh = BABYLON.MeshBuilder.CreateBox('boulder_' + id, { size: s }, scene);
+      const mat = _matte(new BABYLON.StandardMaterial('boulderM_' + id, scene));
+      mat.diffuseColor = new BABYLON.Color3(0.4, 0.35, 0.3);
+      objMesh.material = mat;
+      shapeType = BABYLON.PhysicsShapeType.BOX;
+      mass = 4;
+      break;
+    }
+    case 'cylinder': {
+      const d = 0.3 + Math.random() * 0.3;
+      objMesh = BABYLON.MeshBuilder.CreateCylinder('cyl_' + id, {
+        diameter: d * 2, height: 0.6 + Math.random() * 0.4, tessellation: 12 }, scene);
+      const mat = _matte(new BABYLON.StandardMaterial('cylM_' + id, scene));
+      mat.diffuseColor = new BABYLON.Color3(0.6, 0.4, 0.2);
+      objMesh.material = mat;
+      shapeType = BABYLON.PhysicsShapeType.CYLINDER;
+      break;
+    }
+    case 'cone': {
+      objMesh = BABYLON.MeshBuilder.CreateCylinder('cone_' + id, {
+        diameterTop: 0, diameterBottom: 0.5 + Math.random() * 0.3,
+        height: 0.6 + Math.random() * 0.4, tessellation: 10 }, scene);
+      const mat = _matte(new BABYLON.StandardMaterial('coneM_' + id, scene));
+      mat.diffuseColor = new BABYLON.Color3(0.8, 0.6, 0.1);
+      objMesh.material = mat;
+      shapeType = BABYLON.PhysicsShapeType.CONVEX_HULL;
+      break;
+    }
+    default: {
+      // ball (default)
+      const d = 0.4 + Math.random() * 0.2;
+      objMesh = BABYLON.MeshBuilder.CreateSphere('ball_' + id,
+        { diameter: d * 2, segments: 10 }, scene);
+      const mat = _matte(new BABYLON.StandardMaterial('ballM_' + id, scene));
+      mat.diffuseColor = new BABYLON.Color3(0.9, 0.3, 0.3);
+      objMesh.material = mat;
+      shapeType = BABYLON.PhysicsShapeType.SPHERE;
+      restitution = 0.6;
+      break;
+    }
   }
 
   objMesh.position.set(pos.x, pos.y + 1, pos.z);
   if (shadowGen) { shadowGen.addShadowCaster(objMesh); objMesh.receiveShadows = true; }
   objMesh.isPickable = false;
 
-  const shapeType = spawner.objectType === 'boulder'
-    ? BABYLON.PhysicsShapeType.BOX : BABYLON.PhysicsShapeType.SPHERE;
   const agg = new BABYLON.PhysicsAggregate(objMesh, shapeType, {
-    mass: 2, friction: 0.5, restitution: 0.3 }, scene);
+    mass, friction, restitution }, scene);
   setCollisionFiltering(agg, CG_DEBRIS, CG_GROUND | CG_STRUCTURE | CG_DEBRIS);
   agg.body.setLinearVelocity(spawner.spawnVelocity);
 
   spawner.spawned.push({ mesh: objMesh, agg, spawnTime: performance.now() / 1000 });
-  // Limit spawned objects
   if (spawner.spawned.length > 10) {
     const old = spawner.spawned.shift();
     old.agg.dispose(); old.mesh.dispose();

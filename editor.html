@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dandle - Level Editor</title>
+  <link rel="stylesheet" href="css/editor.css">
+</head>
+<body>
+  <div id="toolbar">
+    <div class="tool-group">
+      <span class="toolbar-label">DANDLE EDITOR</span>
+    </div>
+    <div class="tool-group">
+      <button class="tool-btn active" data-tool="select" title="Select (V)">Select</button>
+      <button class="tool-btn" data-tool="floor" title="Paint Floor (F)">Floor</button>
+      <button class="tool-btn" data-tool="erase" title="Erase Floor (X)">Erase</button>
+      <button class="tool-btn" data-tool="endzone" title="Place End Zone (E)">End Zone</button>
+      <button class="tool-btn" data-tool="wall" title="Place Wall (W)">Wall</button>
+      <button class="tool-btn" data-tool="letterzone" title="Place Letter Zone (L)">Letter Zone</button>
+      <button class="tool-btn" data-tool="zipline" title="Place Zip Line (Z)">Zip Line</button>
+    </div>
+    <div class="tool-group">
+      <button id="btn-playtest" title="Test this level in-game">Play Test</button>
+      <button id="btn-export">Export JSON</button>
+      <button id="btn-import">Import JSON</button>
+      <button id="btn-clear">Clear All</button>
+    </div>
+  </div>
+
+  <div id="main">
+    <canvas id="editor-canvas"></canvas>
+    <div id="panel">
+      <div id="panel-level">
+        <h3>Level</h3>
+        <label>Name <input type="text" id="prop-name" value="My Level" /></label>
+        <label>Hint <input type="text" id="prop-hint" value="Reach the red zone!" /></label>
+        <label>Start Y <input type="number" id="prop-starty" value="0" step="1" /></label>
+      </div>
+      <hr />
+      <div id="panel-object">
+        <h3 id="panel-obj-title">No Selection</h3>
+        <div id="panel-obj-fields"></div>
+      </div>
+      <hr />
+      <div id="panel-help">
+        <h3>Controls</h3>
+        <div class="help-row">Middle-drag or WASD: Pan</div>
+        <div class="help-row">Scroll: Zoom</div>
+        <div class="help-row">Click: Use tool</div>
+        <div class="help-row">Del: Delete selected</div>
+        <div class="help-row">V/F/X/E/W/L/Z: Tool hotkeys</div>
+      </div>
+      <hr />
+      <div id="panel-templates">
+        <h3>Templates</h3>
+        <div id="template-btns"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="modal" class="hidden">
+    <div id="modal-inner">
+      <h3 id="modal-title">JSON</h3>
+      <textarea id="modal-text"></textarea>
+      <div id="modal-actions">
+        <button id="modal-ok">OK</button>
+        <button id="modal-cancel">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="js/editor.js"></script>
+</body>
+</html>

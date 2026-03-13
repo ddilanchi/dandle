@@ -1,0 +1,205 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  overflow: hidden;
+  background: #1a1a2e;
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  color: #ddd;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+#toolbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 16px;
+  background: rgba(0, 0, 0, 0.5);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  flex-shrink: 0;
+}
+
+.toolbar-label {
+  font-weight: bold;
+  font-size: 14px;
+  letter-spacing: 2px;
+  color: #ffd700;
+}
+
+.tool-group {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+button, .tool-btn {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #ddd;
+  padding: 6px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  font-family: inherit;
+}
+
+button:hover, .tool-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.tool-btn.active {
+  background: rgba(255, 215, 0, 0.3);
+  border-color: #ffd700;
+  color: #ffd700;
+}
+
+#btn-playtest {
+  background: rgba(50, 180, 50, 0.3);
+  border-color: #4a4;
+  color: #6f6;
+}
+
+#btn-playtest:hover {
+  background: rgba(50, 180, 50, 0.5);
+}
+
+#btn-clear {
+  background: rgba(180, 50, 50, 0.3);
+  border-color: #a44;
+  color: #f66;
+}
+
+#main {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+#editor-canvas {
+  flex: 1;
+  cursor: crosshair;
+}
+
+#panel {
+  width: 240px;
+  background: rgba(0, 0, 0, 0.4);
+  border-left: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 12px;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+
+#panel h3 {
+  font-size: 12px;
+  letter-spacing: 1px;
+  color: #ffd700;
+  margin-bottom: 8px;
+}
+
+#panel label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  margin-bottom: 6px;
+  gap: 8px;
+}
+
+#panel input, #panel select {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #fff;
+  padding: 4px 6px;
+  border-radius: 3px;
+  font-size: 12px;
+  font-family: inherit;
+  width: 100px;
+}
+
+#panel input[type="number"] {
+  width: 60px;
+}
+
+#panel hr {
+  border: none;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  margin: 12px 0;
+}
+
+.help-row {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.5);
+  margin-bottom: 3px;
+}
+
+#panel-obj-fields label {
+  margin-bottom: 4px;
+}
+
+#panel-obj-fields button {
+  margin-top: 8px;
+  width: 100%;
+  background: rgba(180, 50, 50, 0.3);
+  border-color: #a44;
+  color: #f66;
+}
+
+#template-btns {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+#template-btns button {
+  font-size: 11px;
+  text-align: left;
+}
+
+/* Modal */
+#modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+#modal.hidden { display: none; }
+
+#modal-inner {
+  background: #1a1a2e;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  padding: 20px;
+  width: 500px;
+  max-height: 80vh;
+}
+
+#modal-title {
+  color: #ffd700;
+  margin-bottom: 12px;
+  font-size: 14px;
+}
+
+#modal-text {
+  width: 100%;
+  height: 300px;
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #0f0;
+  font-family: monospace;
+  font-size: 12px;
+  padding: 8px;
+  border-radius: 4px;
+  resize: vertical;
+}
+
+#modal-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+  justify-content: flex-end;
+}

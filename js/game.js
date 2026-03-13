@@ -1,7 +1,7 @@
 import { getRandomWord, isValidWord, getWordTypes, isVerb, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v5.4.3';
+const VERSION = 'v5.5.0';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -698,19 +698,7 @@ function createEndZone(x, z, w, d, y = 0) {
     new BABYLON.Vector3(x + w / 2, y + 2, z + d / 2)
   );
 
-  // Vertical beacon — tall glowing pillar visible from far away
-  const beaconH = 12;
-  const beacon = BABYLON.MeshBuilder.CreateBox('beacon', { width: 0.3, height: beaconH, depth: 0.3 }, scene);
-  const bMat = new BABYLON.StandardMaterial('beaconMat', scene);
-  bMat.diffuseColor = new BABYLON.Color3(1, 0.2, 0.2);
-  bMat.emissiveColor = new BABYLON.Color3(1, 0.4, 0.3);
-  bMat.alpha = 0.5;
-  beacon.material = bMat;
-  beacon.position.set(x, y + beaconH / 2, z);
-  beacon.isPickable = false;
-  levelObstacles.push(beacon);
-
-  // Glowing pillar if elevated
+  // Support pillar if elevated
   if (y > 0) {
     const pillar = BABYLON.MeshBuilder.CreateBox('pillar', { width: w, height: y, depth: d }, scene);
     const pMat = new BABYLON.StandardMaterial('pillarMat', scene);
@@ -1411,6 +1399,117 @@ function explodeStructure() {
 // ── Score tracking ──
 let lettersUsed = 0;
 
+// ── Built-in level configs ──
+const BUILTIN_LEVELS = [
+  { // Level 1
+    name: 'Level 1', hint: 'Build words to push your structure into the red zone!',
+    floor: { type: 'default' },
+    endZone: { x: 10, z: 0, width: 4, depth: 4 },
+  },
+  { // Level 2
+    name: 'Level 2', hint: 'A wall blocks the way. Find a path around it!',
+    floor: { type: 'default' },
+    endZone: { x: 12, z: 0, width: 4, depth: 4 },
+    walls: [{ x: 6, z: 0, width: 1, height: 3, depth: 10 }],
+  },
+  { // Level 3
+    name: 'Level 3', hint: 'The goal is in the air! Build upward momentum!',
+    floor: { type: 'default' },
+    endZone: { x: 10, z: 0, width: 4, depth: 4, elevation: 4 },
+  },
+  { // Level 4
+    name: 'Level 4', hint: 'Two islands! Bridge the gap or launch across!',
+    floor: { type: 'regions', regions: [
+      { xMin: -8, xMax: 5, zMin: -5, zMax: 5, y: 0 },
+      { xMin: 9, xMax: 18, zMin: -5, zMax: 5, y: 0 },
+    ]},
+    endZone: { x: 14, z: 0, width: 4, depth: 4 },
+  },
+  { // Level 5
+    name: 'Level 5', hint: 'Letter zones! -X deletes words with X. +X deletes words WITHOUT X.',
+    floor: { type: 'regions', regions: [
+      { xMin: -8, xMax: 22, zMin: -2, zMax: 2, y: 0 },
+    ]},
+    endZone: { x: 18, z: 0, width: 4, depth: 4, elevation: 8 },
+    letterZones: [
+      { x: 5, z: 0, size: 3, type: '-', letter: 'random' },
+      { x: 8, z: 0, size: 3, type: '+', letter: 'random' },
+      { x: 11, z: 0, size: 3, type: '-', letter: 'random' },
+      { x: 14, z: 0, size: 3, type: '+', letter: 'random' },
+      { x: 17, z: 0, size: 3, type: '-', letter: 'random' },
+    ],
+  },
+  { // Level 6
+    name: 'Level 6', hint: 'Zip line! Build a hook to slide down the pole!',
+    floor: { type: 'regions', regions: [
+      { xMin: -6, xMax: 4, zMin: -4, zMax: 4, y: 10 },
+      { xMin: 20, xMax: 30, zMin: -4, zMax: 4, y: 0 },
+    ]},
+    startY: 10,
+    endZone: { x: 25, z: 0, width: 4, depth: 4 },
+    zipLines: [{ x1: 3, y1: 12, z1: 0, x2: 21, y2: 2, z2: 0, radius: 0.3 }],
+  },
+];
+
+let _customLevelConfig = null;
+
+function loadLevelFromConfig(config) {
+  // Floor
+  if (!config.floor || config.floor.type === 'default') {
+    buildFloor();
+  } else if (config.floor.type === 'regions') {
+    const tiles = [];
+    for (const r of config.floor.regions) {
+      for (let x = r.xMin; x < r.xMax; x++)
+        for (let z = r.zMin; z < r.zMax; z++)
+          tiles.push({ x, z, y: r.y || 0 });
+    }
+    buildFloor(tiles);
+  } else if (config.floor.type === 'custom' && config.floor.tiles) {
+    buildFloor(config.floor.tiles);
+  } else {
+    buildFloor();
+  }
+
+  // Starting word
+  const word = getRandomWord();
+  const startX = -Math.floor(word.length / 2);
+  const startY = config.startY || 0;
+  placeWord(word, startX, 0, 'x+', 0, false, startY);
+  lettersUsed = word.length;
+
+  // Camera
+  camera.target = new BABYLON.Vector3(0, startY, 0);
+  camera.alpha = -Math.PI / 4;
+  camera.beta = Math.PI / 3;
+  camera.radius = 16;
+
+  // End zone
+  if (config.endZone) {
+    const ez = config.endZone;
+    createEndZone(ez.x, ez.z, ez.width, ez.depth, ez.elevation || 0);
+  }
+
+  // Walls
+  for (const w of (config.walls || [])) {
+    addWall(w.x, w.z, w.width, w.height, w.depth);
+  }
+
+  // Letter zones
+  const zoneLetters = 'AEIORSTLN';
+  for (const lz of (config.letterZones || [])) {
+    const letter = lz.letter === 'random'
+      ? zoneLetters[Math.floor(Math.random() * zoneLetters.length)]
+      : lz.letter;
+    addLetterZone(lz.x, lz.z, lz.size, lz.type, letter);
+  }
+
+  // Zip lines
+  for (const zl of (config.zipLines || [])) {
+    addZipLine(zl.x1, zl.y1, zl.z1, zl.x2, zl.y2, zl.z2, zl.radius || 0.3);
+  }
+}
+
 // ── Start level ──
 function startLevel() {
   // Dispose all cubes
@@ -1458,78 +1557,12 @@ function startLevel() {
   explosionPieces.length = 0;
 
   // Build floor
-  if (currentLevel === 4) {
-    const tiles = [];
-    for (let x = -8; x < 5; x++)
-      for (let z = -5; z < 5; z++) tiles.push({ x, z, y: 0 });
-    for (let x = 9; x < 18; x++)
-      for (let z = -5; z < 5; z++) tiles.push({ x, z, y: 0 });
-    buildFloor(tiles);
-  } else if (currentLevel === 5) {
-    const tiles = [];
-    for (let x = -8; x < 22; x++)
-      for (let z = -2; z < 2; z++) tiles.push({ x, z, y: 0 });
-    buildFloor(tiles);
-  } else if (currentLevel === 6) {
-    const tiles = [];
-    for (let x = -6; x < 4; x++)
-      for (let z = -4; z < 4; z++) tiles.push({ x, z, y: 10 });
-    for (let x = 20; x < 30; x++)
-      for (let z = -4; z < 4; z++) tiles.push({ x, z, y: 0 });
-    buildFloor(tiles);
-  } else {
-    buildFloor();
-  }
+  // Load level config (builtin or custom)
+  const config = _customLevelConfig || BUILTIN_LEVELS[currentLevel - 1] || BUILTIN_LEVELS[0];
+  loadLevelFromConfig(config);
 
-  // Starting word
-  const word = getRandomWord();
-  const startX = -Math.floor(word.length / 2);
-  const startY = currentLevel === 6 ? 10 : 0;
-  placeWord(word, startX, 0, 'x+', 0, false, startY);
-  lettersUsed = word.length;
-
-  // Camera
-  const camTargetY = startY;
-  camera.target = new BABYLON.Vector3(0, camTargetY, 0);
-  camera.alpha = -Math.PI / 4;
-  camera.beta = Math.PI / 3;
-  camera.radius = 16;
-
-  const LEVEL_HINTS = {
-    1: 'Build words to push your structure into the red zone!',
-    2: 'A wall blocks the way. Find a path around it!',
-    3: 'The goal is in the air! Build upward momentum!',
-    4: 'Two islands! Bridge the gap or launch across!',
-    5: 'Letter zones! -X deletes words with X. +X deletes words WITHOUT X.',
-    6: 'Zip line! Build a hook to slide down the pole!',
-  };
-
-  switch (currentLevel) {
-    case 1: createEndZone(10, 0, 4, 4); break;
-    case 2: createEndZone(12, 0, 4, 4); addWall(6, 0, 1, 3, 10); break;
-    case 3: createEndZone(10, 0, 4, 4, 4); break;
-    case 4: createEndZone(14, 0, 4, 4); break;
-    case 5: {
-      createEndZone(18, 0, 4, 4, 8);
-      const zoneLetters = 'AEIORSTLN';
-      for (let col = 0; col < 5; col++) {
-        const zx = 5 + col * 3;
-        const type = col % 2 === 0 ? '-' : '+';
-        const letter = zoneLetters[Math.floor(Math.random() * zoneLetters.length)];
-        addLetterZone(zx, 0, 3, type, letter);
-      }
-      break;
-    }
-    case 6: {
-      createEndZone(25, 0, 4, 4);
-      addZipLine(3, 12, 0, 21, 2, 0, 0.3);
-      break;
-    }
-    default: createEndZone(10, 0, 4, 4); break;
-  }
-
-  levelInfoEl.textContent = `Level ${currentLevel}`;
-  hintEl.textContent = LEVEL_HINTS[currentLevel] || 'Reach the red zone!';
+  levelInfoEl.textContent = _customLevelConfig ? (config.name || 'Custom Level') : `Level ${currentLevel}`;
+  hintEl.textContent = config.hint || 'Reach the red zone!';
   audio.startMusic(currentLevel);
   startTutorial();
 
@@ -1832,7 +1865,17 @@ async function beginGame() {
 
   gameStarted = true;
   introScreen.classList.add('hidden');
-  currentLevel = 1;
+
+  // Check for custom level from editor
+  const params = new URLSearchParams(window.location.search);
+  if (params.has('custom')) {
+    try {
+      const json = localStorage.getItem('dandle_custom_level');
+      if (json) _customLevelConfig = JSON.parse(json);
+    } catch (e) { console.warn('Failed to load custom level', e); }
+  }
+
+  currentLevel = _customLevelConfig ? 1 : 1;
   startLevel();
 }
 

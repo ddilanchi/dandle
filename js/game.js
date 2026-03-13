@@ -1,7 +1,7 @@
 import { getRandomWord, isValidWord, getWordTypes, isVerb, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v5.3.7';
+const VERSION = 'v5.3.8';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -1208,6 +1208,7 @@ function _findNavTarget(fromCube, dirX, dirY, dirZ) {
 if (typeof window !== 'undefined') window._findNavTarget = _findNavTarget;
 
 function _handleNavKey(key) {
+  console.warn('[NAV-ENTRY] key=' + key + ' selectedCube=' + (selectedCube ? selectedCube.letter : 'null'));
   if (!selectedCube) return false;
 
   const moveMap = {

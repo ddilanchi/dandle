@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Dandle - Level Editor</title>
   <link rel="stylesheet" href="css/editor.css">
+  <script src="https://cdn.babylonjs.com/babylon.js"></script>
 </head>
 <body>
   <div id="toolbar">
@@ -14,7 +15,7 @@
     <div class="tool-group">
       <button class="tool-btn active" data-tool="select" title="Select (V)">Select</button>
       <button class="tool-btn" data-tool="floor" title="Paint Floor (F)">Floor</button>
-      <button class="tool-btn" data-tool="erase" title="Erase Floor (X)">Erase</button>
+      <button class="tool-btn" data-tool="erase" title="Erase (X)">Erase</button>
       <button class="tool-btn" data-tool="endzone" title="Place End Zone (E)">End Zone</button>
       <button class="tool-btn" data-tool="wall" title="Place Wall (W)">Wall</button>
       <button class="tool-btn" data-tool="letterzone" title="Place Letter Zone (L)">Letter Zone</button>
@@ -36,6 +37,7 @@
         <label>Name <input type="text" id="prop-name" value="My Level" /></label>
         <label>Hint <input type="text" id="prop-hint" value="Reach the red zone!" /></label>
         <label>Start Y <input type="number" id="prop-starty" value="0" step="1" /></label>
+        <label>Floor Y <input type="number" id="prop-floory" value="0" step="1" title="Y level for painting floor tiles" /></label>
       </div>
       <hr />
       <div id="panel-object">
@@ -45,11 +47,11 @@
       <hr />
       <div id="panel-help">
         <h3>Controls</h3>
-        <div class="help-row">Middle-drag or WASD: Pan</div>
+        <div class="help-row">Left-drag: Orbit camera</div>
+        <div class="help-row">Right-drag: Pan camera</div>
         <div class="help-row">Scroll: Zoom</div>
-        <div class="help-row">Click: Use tool</div>
+        <div class="help-row">Click: Use tool on ground</div>
         <div class="help-row">Del: Delete selected</div>
-        <div class="help-row">V/F/X/E/W/L/Z: Tool hotkeys</div>
       </div>
       <hr />
       <div id="panel-templates">

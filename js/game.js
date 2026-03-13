@@ -1,7 +1,7 @@
 import { getRandomWord, isValidWord, getWordTypes, isVerb, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v5.3.9';
+const VERSION = 'v5.4.0';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -1169,11 +1169,19 @@ function _getOpenFaces(cube) {
   });
 }
 
-function _findNavTarget(fromCube, dirX, dirY, dirZ) {
-  // Find the best cube to navigate to in the given world direction.
-  // Uses world positions so it works regardless of structure rotation.
-  // Score = forward_distance - 2 * perpendicular_distance
-  // Among cubes with positive forward distance, pick highest score (closest + most aligned).
+function _getCameraForward() {
+  // Camera-relative horizontal forward (projected onto XZ plane)
+  const forward = camera.getForwardRay().direction;
+  // Flatten to XZ and normalize
+  const len = Math.sqrt(forward.x * forward.x + forward.z * forward.z);
+  if (len < 0.001) return { fx: 0, fz: -1, rx: 1, rz: 0 };
+  const fx = forward.x / len;
+  const fz = forward.z / len;
+  // Right = perpendicular to forward in XZ
+  return { fx, fz, rx: -fz, rz: fx };
+}
+
+function _findNavTarget(fromCube, worldDirX, worldDirY, worldDirZ) {
   const sp = fromCube.mesh.position;
   let best = null;
   let bestScore = -Infinity;
@@ -1183,42 +1191,50 @@ function _findNavTarget(fromCube, dirX, dirY, dirZ) {
     const cp = c.mesh.position;
     const dx = cp.x - sp.x, dy = cp.y - sp.y, dz = cp.z - sp.z;
 
-    // Forward distance (projection onto direction)
-    const fwd = dx * dirX + dy * dirY + dz * dirZ;
-    if (fwd < 0.1) continue; // must be ahead of us
+    // Forward distance along requested direction
+    const fwd = dx * worldDirX + dy * worldDirY + dz * worldDirZ;
+    if (fwd < 0.1) continue;
 
-    // Perpendicular distance squared
     const totalDistSq = dx * dx + dy * dy + dz * dz;
-    const perpDistSq = totalDistSq - fwd * fwd;
-    const perpDist = Math.sqrt(Math.max(0, perpDistSq));
+    const perpDistSq = Math.max(0, totalDistSq - fwd * fwd);
+    const perpDist = Math.sqrt(perpDistSq);
 
-    // Score: prefer close cubes that are well-aligned with direction
-    // Negative total distance (closer is better) with heavy penalty for off-axis
+    // Prefer close + aligned. Heavy perpendicular penalty keeps navigation tight.
     const score = -Math.sqrt(totalDistSq) - 2 * perpDist;
-
-    if (score > bestScore) {
-      bestScore = score;
-      best = c;
-    }
+    if (score > bestScore) { bestScore = score; best = c; }
   }
   return best;
 }
 
-// Export for testing
-if (typeof window !== 'undefined') window._findNavTarget = _findNavTarget;
-
 function _handleNavKey(key) {
   if (!selectedCube) return false;
 
-  const moveMap = {
-    'W': [0, 0, -1], 'S': [0, 0, 1],
-    'A': [-1, 0, 0], 'D': [1, 0, 0],
-    'Q': [0, 1, 0],  'E': [0, -1, 0],
-  };
+  if ('WASD'.includes(key)) {
+    // Camera-relative directions: W=screen forward, S=screen back, A=screen left, D=screen right
+    const { fx, fz, rx, rz } = _getCameraForward();
+    let dirX, dirY, dirZ;
+    switch (key) {
+      case 'W': dirX = fx; dirY = 0; dirZ = fz; break;
+      case 'S': dirX = -fx; dirY = 0; dirZ = -fz; break;
+      case 'A': dirX = -rx; dirY = 0; dirZ = -rz; break;
+      case 'D': dirX = rx; dirY = 0; dirZ = rz; break;
+    }
+    const neighbor = _findNavTarget(selectedCube, dirX, dirY, dirZ);
+    if (neighbor) {
+      selectedCube = neighbor;
+      highlightCube(neighbor);
+      selectedInfoEl.textContent = `Selected: [${neighbor.letter}] at (${neighbor.gx}, ${neighbor.gz})`;
+      audio.select();
+      updateGhostPreview();
+      advanceTutorial('navigate');
+    }
+    return true;
+  }
 
-  if (moveMap[key]) {
-    const [mx, my, mz] = moveMap[key];
-    const neighbor = _findNavTarget(selectedCube, mx, my, mz);
+  if (key === 'Q' || key === 'E') {
+    // Q = up, E = down (always world Y)
+    const dirY = key === 'Q' ? 1 : -1;
+    const neighbor = _findNavTarget(selectedCube, 0, dirY, 0);
     if (neighbor) {
       selectedCube = neighbor;
       highlightCube(neighbor);
@@ -1880,7 +1896,7 @@ const TUTORIAL_STEPS = [
     trigger: 'direction',
   },
   {
-    text: 'Navigate between cubes',
+    text: 'Navigate between cubes (camera-relative, Q/E for up/down)',
     keys: ['Shift', '+', 'W', 'A', 'S', 'D', 'Q', 'E'],
     trigger: 'navigate',
   },

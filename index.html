@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Dandle</title>
-  <link rel="stylesheet" href="css/style.css?v=5.3.3">
+  <link rel="stylesheet" href="css/style.css?v=5.3.4">
   <script src="https://cdn.babylonjs.com/babylon.js"></script>
   <script src="https://cdn.babylonjs.com/havok/HavokPhysics_umd.js"></script>
 </head>
@@ -91,6 +91,13 @@
       <div id="intro-version"></div>
     </div>
   </div>
+  <div id="tutorial-overlay" class="hidden">
+    <div id="tutorial-box">
+      <div id="tutorial-text"></div>
+      <div id="tutorial-keys"></div>
+      <div id="tutorial-step"></div>
+    </div>
+  </div>
   <div id="version"></div>
   <div id="debug-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.92);color:#0f0;font:13px monospace;padding:16px;z-index:999;overflow:auto;white-space:pre-wrap;"></div>
   <canvas id="game-canvas"></canvas>
@@ -116,6 +123,6 @@
       }
     });
   </script>
-  <script type="module" src="js/game.js?v=5.3.3"></script>
+  <script type="module" src="js/game.js?v=5.3.4"></script>
 </body>
 </html>

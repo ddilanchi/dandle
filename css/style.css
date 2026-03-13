@@ -680,6 +680,78 @@ body {
   50% { opacity: 0.9; }
 }
 
+/* ── Tutorial ── */
+#tutorial-overlay {
+  position: fixed;
+  bottom: 140px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 50;
+  pointer-events: none;
+  transition: opacity 0.4s;
+}
+
+#tutorial-overlay.hidden {
+  display: none;
+}
+
+#tutorial-box {
+  background: rgba(0, 0, 0, 0.85);
+  border: 1px solid rgba(255, 215, 0, 0.4);
+  border-radius: 12px;
+  padding: 16px 24px;
+  text-align: center;
+  min-width: 280px;
+  max-width: 420px;
+  backdrop-filter: blur(8px);
+}
+
+#tutorial-text {
+  color: #fff;
+  font-size: 16px;
+  line-height: 1.5;
+  margin-bottom: 8px;
+}
+
+#tutorial-keys {
+  display: flex;
+  gap: 6px;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+#tutorial-keys:empty {
+  display: none;
+}
+
+.tut-key {
+  display: inline-block;
+  background: rgba(255, 255, 255, 0.15);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 13px;
+  color: #ffd700;
+  font-family: monospace;
+  font-weight: bold;
+}
+
+#tutorial-step {
+  color: rgba(255, 255, 255, 0.35);
+  font-size: 11px;
+  letter-spacing: 1px;
+}
+
+@keyframes tutPulse {
+  0%, 100% { border-color: rgba(255, 215, 0, 0.4); }
+  50% { border-color: rgba(255, 215, 0, 0.8); }
+}
+
+#tutorial-box {
+  animation: tutPulse 2s ease-in-out infinite;
+}
+
 #version {
   position: fixed;
   bottom: 8px;

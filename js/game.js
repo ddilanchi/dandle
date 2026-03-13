@@ -1,7 +1,7 @@
 import { getRandomWord, isValidWord, getWordTypes, isVerb, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v5.3.3';
+const VERSION = 'v5.3.4';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -1181,17 +1181,33 @@ function _handleNavKey(key) {
 
   if (moveMap[key]) {
     const m = moveMap[key];
-    const neighbor = cubes.find(c =>
+    // Try exact adjacent neighbor first
+    let neighbor = cubes.find(c =>
       c.gx === selectedCube.gx + m.x &&
       (c.gy || 0) === (selectedCube.gy || 0) + m.y &&
       c.gz === selectedCube.gz + m.z
     );
+    // If no direct neighbor, find nearest cube in that general direction
+    if (!neighbor) {
+      const sx = selectedCube.gx, sy = selectedCube.gy || 0, sz = selectedCube.gz;
+      let bestDist = Infinity;
+      for (const c of cubes) {
+        if (c === selectedCube) continue;
+        const dx = c.gx - sx, dy = (c.gy || 0) - sy, dz = c.gz - sz;
+        // Check if cube is in the pressed direction (dot product > 0)
+        const dot = dx * m.x + dy * m.y + dz * m.z;
+        if (dot <= 0) continue;
+        const dist = Math.abs(dx) + Math.abs(dy) + Math.abs(dz);
+        if (dist < bestDist) { bestDist = dist; neighbor = c; }
+      }
+    }
     if (neighbor) {
       selectedCube = neighbor;
       highlightCube(neighbor);
       selectedInfoEl.textContent = `Selected: [${neighbor.letter}] at (${neighbor.gx}, ${neighbor.gz})`;
       audio.select();
       updateGhostPreview();
+      advanceTutorial('navigate');
     }
     return true;
   }
@@ -1202,6 +1218,7 @@ function _handleNavKey(key) {
     currentDir = openFaces[(curIdx + 1) % openFaces.length];
     audio.select();
     updateGhostPreview();
+    advanceTutorial('direction');
     return true;
   }
   return false;
@@ -1312,6 +1329,7 @@ function submitWord() {
   placeWord(text, startGx, startGz, dir, wordIdx, true, startGy);
   lettersUsed += text.length;
   showMessage(`"${text}" placed (${lettersUsed} letters used)`, '#aaddff');
+  advanceTutorial('place');
 }
 
 // ── Explosion ──
@@ -1477,6 +1495,7 @@ function startLevel() {
   levelInfoEl.textContent = `Level ${currentLevel}`;
   hintEl.textContent = LEVEL_HINTS[currentLevel] || 'Reach the red zone!';
   audio.startMusic(currentLevel);
+  startTutorial();
 
   console.log('[DANDLE] Level', currentLevel, 'started | cubes:', cubes.length);
 }
@@ -1516,6 +1535,7 @@ scene.onPointerObservable.add((pointerInfo) => {
         wordInput.value = '';
     wordInput.focus();
     audio.select();
+    advanceTutorial('select');
   } else {
     selectedCube = null;
     clearHighlight();
@@ -1813,6 +1833,96 @@ scene.registerBeforeRender(() => {
   updateCameraKeys();
   animateEndZone(time);
 });
+
+// ── Tutorial system (level 1 only) ──
+const tutOverlay = document.getElementById('tutorial-overlay');
+const tutText = document.getElementById('tutorial-text');
+const tutKeys = document.getElementById('tutorial-keys');
+const tutStep = document.getElementById('tutorial-step');
+let tutorialStep = -1;
+let tutorialDone = false;
+let _tutTimer = null;
+
+const TUTORIAL_STEPS = [
+  {
+    text: 'Click a letter cube to select it',
+    keys: ['Left Click'],
+    trigger: 'select',
+  },
+  {
+    text: 'Type a word containing that letter, then press Enter to place it',
+    keys: ['Enter'],
+    trigger: 'place',
+  },
+  {
+    text: 'Cycle placement direction before placing',
+    keys: ['Shift', '+', 'Space'],
+    trigger: 'direction',
+  },
+  {
+    text: 'Navigate between cubes',
+    keys: ['Shift', '+', 'W', 'A', 'S', 'D', 'Q', 'E'],
+    trigger: 'navigate',
+  },
+  {
+    text: 'Orbit the camera by dragging, scroll to zoom, middle-click to pan',
+    keys: ['Left Drag', 'Scroll', 'Middle Click'],
+    trigger: 'auto',
+    delay: 4000,
+  },
+  {
+    text: 'Push your structure into the red zone to win!',
+    keys: [],
+    trigger: 'auto',
+    delay: 3000,
+  },
+];
+
+function showTutorial(step) {
+  if (step >= TUTORIAL_STEPS.length) {
+    tutOverlay.classList.add('hidden');
+    tutorialDone = true;
+    return;
+  }
+  tutorialStep = step;
+  const s = TUTORIAL_STEPS[step];
+  tutText.textContent = s.text;
+  tutKeys.innerHTML = s.keys.map(k =>
+    k === '+' ? '<span style="color:rgba(255,255,255,0.4);margin:0 2px">+</span>' : `<span class="tut-key">${k}</span>`
+  ).join('');
+  tutStep.textContent = `${step + 1} / ${TUTORIAL_STEPS.length}`;
+  tutOverlay.classList.remove('hidden');
+
+  if (s.trigger === 'auto') {
+    clearTimeout(_tutTimer);
+    _tutTimer = setTimeout(() => showTutorial(step + 1), s.delay);
+  }
+}
+
+function advanceTutorial(trigger) {
+  if (tutorialDone || currentLevel !== 1) return;
+  if (tutorialStep < 0) return;
+  if (TUTORIAL_STEPS[tutorialStep]?.trigger === trigger) {
+    clearTimeout(_tutTimer);
+    showTutorial(tutorialStep + 1);
+  }
+}
+
+function startTutorial() {
+  if (currentLevel !== 1) {
+    tutOverlay.classList.add('hidden');
+    return;
+  }
+  // Check if player has completed level 1 before — skip tutorial
+  const unlocked = parseInt(localStorage.getItem('dandle_unlocked') || '1', 10);
+  if (unlocked > 1) {
+    tutorialDone = true;
+    tutOverlay.classList.add('hidden');
+    return;
+  }
+  tutorialDone = false;
+  showTutorial(0);
+}
 
 // ── Resize ──
 window.addEventListener('resize', () => engine.resize());

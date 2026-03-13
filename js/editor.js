@@ -183,6 +183,51 @@ function addDefaultFloor() {
       addFloor(x, z, 0);
 }
 
+// ── Starting word indicator ──
+// Shows where the 5-letter starting word will spawn (x=-2..2, z=0, y=startY)
+const startIndicators = [];
+
+function rebuildStartIndicators() {
+  for (const m of startIndicators) m.dispose();
+  startIndicators.length = 0;
+
+  const y = startY;
+  for (let i = 0; i < 5; i++) {
+    const x = -2 + i;
+    const mesh = BABYLON.MeshBuilder.CreateBox('start_' + i, { width: 0.94, height: 0.94, depth: 0.94 }, scene);
+    mesh.position.set(x + 0.5, y + 1.5, 0.5); // one block above floor
+    const mat = new BABYLON.StandardMaterial('startMat_' + i, scene);
+    mat.diffuseColor = new BABYLON.Color3(0.4, 0.8, 1);
+    mat.emissiveColor = new BABYLON.Color3(0.1, 0.2, 0.4);
+    mat.alpha = 0.35;
+    mesh.material = mat;
+    mesh.isPickable = false;
+
+    // Add letter label
+    const label = BABYLON.MeshBuilder.CreatePlane('startLbl_' + i, { width: 0.6, height: 0.6 }, scene);
+    const dt = new BABYLON.DynamicTexture('startTex_' + i, { width: 64, height: 64 }, scene, false);
+    const ctx = dt.getContext();
+    ctx.fillStyle = 'rgba(100,200,255,0.9)';
+    ctx.font = 'bold 40px Arial';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('ABCDE'[i], 32, 34);
+    dt.update(false);
+    const lmat = new BABYLON.StandardMaterial('startLmat_' + i, scene);
+    lmat.diffuseTexture = dt;
+    lmat.emissiveColor = new BABYLON.Color3(0.3, 0.6, 1);
+    lmat.opacityTexture = dt;
+    lmat.backFaceCulling = false;
+    label.material = lmat;
+    label.parent = mesh;
+    label.position.y = 0;
+    label.billboardMode = BABYLON.Mesh.BILLBOARDMODE_ALL;
+    label.isPickable = false;
+
+    startIndicators.push(mesh, label);
+  }
+}
+
 // ── Zip lines (rendered as cube chains) ──
 function rebuildZipLines() {
   for (const m of zipLineMeshes) m.dispose();
@@ -804,6 +849,7 @@ function importLevel(config) {
   // Zip lines
   if (config.zipLines) zipLines = config.zipLines.map(zl => ({ ...zl }));
   rebuildZipLines();
+  rebuildStartIndicators();
   updateHighlight(); updatePanel(); autoSave();
 }
 
@@ -814,7 +860,7 @@ function autoSave() {
 // ── Level property inputs ──
 document.getElementById('prop-name').addEventListener('input', e => { levelName = e.target.value; autoSave(); });
 document.getElementById('prop-hint').addEventListener('input', e => { levelHint = e.target.value; autoSave(); });
-document.getElementById('prop-starty').addEventListener('change', e => { startY = Number(e.target.value); autoSave(); });
+document.getElementById('prop-starty').addEventListener('change', e => { startY = Number(e.target.value); rebuildStartIndicators(); autoSave(); });
 document.getElementById('prop-floory').addEventListener('change', e => {
   floorY = Number(e.target.value);
   groundPlane.position.y = floorY - 0.01;
@@ -860,8 +906,16 @@ document.getElementById('btn-import').addEventListener('click', () => {
 });
 
 document.getElementById('btn-clear').addEventListener('click', () => {
-  if (!confirm('Clear everything?')) return;
-  clearAll(); selected = null; updateHighlight(); updatePanel(); autoSave();
+  if (!confirm('Clear everything? (Floor will be kept)')) return;
+  // Clear everything except floor
+  for (const layer of Object.keys(blocks)) {
+    if (layer === 'floor') continue;
+    clearLayer(layer);
+  }
+  for (const m of zipLineMeshes) m.dispose();
+  zipLines = []; zipLineMeshes = [];
+  selected = null;
+  rebuildStartIndicators(); updateHighlight(); updatePanel(); autoSave();
 });
 
 // ── Builtin templates ──
@@ -908,8 +962,8 @@ for (let i = 0; i < BUILTIN_LEVELS.length; i++) {
 try {
   const wip = localStorage.getItem('dandle_editor_wip');
   if (wip) importLevel(JSON.parse(wip));
-  else addDefaultFloor();
-} catch (e) { addDefaultFloor(); }
+  else { addDefaultFloor(); rebuildStartIndicators(); }
+} catch (e) { addDefaultFloor(); rebuildStartIndicators(); }
 
 engine.runRenderLoop(() => scene.render());
 window.addEventListener('resize', () => engine.resize());

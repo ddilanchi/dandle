@@ -1,7 +1,7 @@
 import { getRandomWord, isValidWord, getWordTypes, isVerb, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v5.4.3';
+const VERSION = 'v5.4.2';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -665,28 +665,18 @@ function updateGhostPreview() {
     const existing = cubes.find(c => c.gx === gx && (c.gy || 0) === gy && c.gz === gz);
     if (existing) continue;
 
-    // Find the nearest existing neighbor to this ghost slot for reference rotation
-    let refCube = selectedCube;
-    for (const c of cubes) {
-      const md = Math.abs(c.gx - gx) + Math.abs((c.gy || 0) - gy) + Math.abs(c.gz - gz);
-      if (md === 1) { refCube = c; break; }
-    }
-    const refPos = refCube.mesh.position;
-    const refRot = refCube.mesh.rotationQuaternion || BABYLON.Quaternion.Identity();
-    const refRotMatrix = new BABYLON.Matrix();
-    refRot.toRotationMatrix(refRotMatrix);
-
-    // Grid offset from reference cube
-    const offsetGrid = new BABYLON.Vector3(gx - refCube.gx, gy - (refCube.gy || 0), gz - refCube.gz);
-    const rotatedOffset = BABYLON.Vector3.TransformCoordinates(offsetGrid, refRotMatrix);
+    // Grid offset from selected cube
+    const offsetGrid = new BABYLON.Vector3(gx - selGx, gy - selGy, gz - selGz);
+    // Rotate offset by structure's rotation
+    const rotatedOffset = BABYLON.Vector3.TransformCoordinates(offsetGrid, rotMatrix);
 
     const ghost = makeGhostMesh(text[i]);
     ghost.position.set(
-      refPos.x + rotatedOffset.x,
-      refPos.y + rotatedOffset.y,
-      refPos.z + rotatedOffset.z
+      selPos.x + rotatedOffset.x,
+      selPos.y + rotatedOffset.y,
+      selPos.z + rotatedOffset.z
     );
-    ghost.rotationQuaternion = refRot.clone();
+    ghost.rotationQuaternion = rot.clone();
     _ghostMeshes.push(ghost);
   }
 }

@@ -1,7 +1,7 @@
 import { getRandomWord, isValidWord, getWordTypes, isVerb, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v5.3.4';
+const VERSION = 'v5.3.5';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -1172,7 +1172,7 @@ function _getOpenFaces(cube) {
 function _handleNavKey(key) {
   if (!selectedCube) return false;
 
-  // Fixed world-axis navigation: W/S = Z, A/D = X, Q/E = Y
+  // World-position navigation: find nearest cube in the pressed direction
   const moveMap = {
     'W': { x: 0, y: 0, z: -1 }, 'S': { x: 0, y: 0, z: 1 },
     'A': { x: -1, y: 0, z: 0 }, 'D': { x: 1, y: 0, z: 0 },
@@ -1181,25 +1181,21 @@ function _handleNavKey(key) {
 
   if (moveMap[key]) {
     const m = moveMap[key];
-    // Try exact adjacent neighbor first
-    let neighbor = cubes.find(c =>
-      c.gx === selectedCube.gx + m.x &&
-      (c.gy || 0) === (selectedCube.gy || 0) + m.y &&
-      c.gz === selectedCube.gz + m.z
-    );
-    // If no direct neighbor, find nearest cube in that general direction
-    if (!neighbor) {
-      const sx = selectedCube.gx, sy = selectedCube.gy || 0, sz = selectedCube.gz;
-      let bestDist = Infinity;
-      for (const c of cubes) {
-        if (c === selectedCube) continue;
-        const dx = c.gx - sx, dy = (c.gy || 0) - sy, dz = c.gz - sz;
-        // Check if cube is in the pressed direction (dot product > 0)
-        const dot = dx * m.x + dy * m.y + dz * m.z;
-        if (dot <= 0) continue;
-        const dist = Math.abs(dx) + Math.abs(dy) + Math.abs(dz);
-        if (dist < bestDist) { bestDist = dist; neighbor = c; }
-      }
+    const dir = new BABYLON.Vector3(m.x, m.y, m.z);
+    const sp = selectedCube.mesh.position;
+
+    // Find the nearest cube whose world position is in the pressed direction
+    let neighbor = null;
+    let bestDist = Infinity;
+    for (const c of cubes) {
+      if (c === selectedCube) continue;
+      const cp = c.mesh.position;
+      const dx = cp.x - sp.x, dy = cp.y - sp.y, dz = cp.z - sp.z;
+      // Dot product: is this cube in the direction we pressed?
+      const dot = dx * dir.x + dy * dir.y + dz * dir.z;
+      if (dot < 0.3) continue; // must be at least slightly in that direction
+      const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      if (dist < bestDist) { bestDist = dist; neighbor = c; }
     }
     if (neighbor) {
       selectedCube = neighbor;

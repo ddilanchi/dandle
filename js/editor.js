@@ -502,6 +502,18 @@ function handleToolClick() {
 
 // ── Keyboard ──
 window.addEventListener('keydown', (e) => {
+  // Ctrl+Z / Ctrl+Y work even in inputs
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+    e.preventDefault();
+    if (e.shiftKey) redo(); else undo();
+    return;
+  }
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
+    e.preventDefault();
+    redo();
+    return;
+  }
+
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
   const k = e.key.toLowerCase();
   const toolMap = { v:'select', f:'floor', x:'erase', e:'endzone', w:'wall',
@@ -887,7 +899,44 @@ function importLevel(config) {
   updateHighlight(); updatePanel(); autoSave();
 }
 
+// ── Undo / Redo ──
+const undoStack = [];
+const redoStack = [];
+const MAX_UNDO = 50;
+let _undoLock = false; // prevent snapshots during undo/redo restore
+
+function pushUndo() {
+  if (_undoLock) return;
+  const snap = JSON.stringify(exportLevel());
+  // Don't push if identical to last
+  if (undoStack.length > 0 && undoStack[undoStack.length - 1] === snap) return;
+  undoStack.push(snap);
+  if (undoStack.length > MAX_UNDO) undoStack.shift();
+  redoStack.length = 0; // new action clears redo
+}
+
+function undo() {
+  if (undoStack.length === 0) return;
+  // Save current state to redo
+  redoStack.push(JSON.stringify(exportLevel()));
+  const snap = undoStack.pop();
+  _undoLock = true;
+  importLevel(JSON.parse(snap));
+  _undoLock = false;
+}
+
+function redo() {
+  if (redoStack.length === 0) return;
+  // Save current state to undo
+  undoStack.push(JSON.stringify(exportLevel()));
+  const snap = redoStack.pop();
+  _undoLock = true;
+  importLevel(JSON.parse(snap));
+  _undoLock = false;
+}
+
 function autoSave() {
+  pushUndo();
   try { localStorage.setItem('dandle_editor_wip', JSON.stringify(exportLevel())); } catch (e) {}
 }
 

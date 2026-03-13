@@ -1,7 +1,7 @@
 import { getRandomWord, isValidWord, getWordTypes, isVerb, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v5.4.0';
+const VERSION = 'v5.4.1';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -1169,16 +1169,14 @@ function _getOpenFaces(cube) {
   });
 }
 
-function _getCameraForward() {
-  // Camera-relative horizontal forward (projected onto XZ plane)
-  const forward = camera.getForwardRay().direction;
-  // Flatten to XZ and normalize
-  const len = Math.sqrt(forward.x * forward.x + forward.z * forward.z);
-  if (len < 0.001) return { fx: 0, fz: -1, rx: 1, rz: 0 };
-  const fx = forward.x / len;
-  const fz = forward.z / len;
-  // Right = perpendicular to forward in XZ
-  return { fx, fz, rx: -fz, rz: fx };
+function _getScreenDirs() {
+  // Get camera view/right/up vectors projected into world space
+  const vm = camera.getViewMatrix();
+  // Camera right = row 0 of view matrix
+  const rx = vm.m[0], ry = vm.m[1], rz = vm.m[2];
+  // Camera up = row 1 of view matrix
+  const ux = vm.m[4], uy = vm.m[5], uz = vm.m[6];
+  return { rx, ry, rz, ux, uy, uz };
 }
 
 function _findNavTarget(fromCube, worldDirX, worldDirY, worldDirZ) {
@@ -1199,49 +1197,45 @@ function _findNavTarget(fromCube, worldDirX, worldDirY, worldDirZ) {
     const perpDistSq = Math.max(0, totalDistSq - fwd * fwd);
     const perpDist = Math.sqrt(perpDistSq);
 
-    // Prefer close + aligned. Heavy perpendicular penalty keeps navigation tight.
     const score = -Math.sqrt(totalDistSq) - 2 * perpDist;
     if (score > bestScore) { bestScore = score; best = c; }
   }
   return best;
 }
 
+function _navTo(cube) {
+  selectedCube = cube;
+  highlightCube(cube);
+  selectedInfoEl.textContent = `Selected: [${cube.letter}] at (${cube.gx}, ${cube.gz})`;
+  audio.select();
+  updateGhostPreview();
+  advanceTutorial('navigate');
+}
+
 function _handleNavKey(key) {
   if (!selectedCube) return false;
 
-  if ('WASD'.includes(key)) {
-    // Camera-relative directions: W=screen forward, S=screen back, A=screen left, D=screen right
-    const { fx, fz, rx, rz } = _getCameraForward();
+  if ('WASD'.includes(key) || key === 'Q' || key === 'E') {
+    // Screen-space directions using camera view matrix
+    // W = screen up, S = screen down, A = screen left, D = screen right
+    // Q/E = world up/down
     let dirX, dirY, dirZ;
-    switch (key) {
-      case 'W': dirX = fx; dirY = 0; dirZ = fz; break;
-      case 'S': dirX = -fx; dirY = 0; dirZ = -fz; break;
-      case 'A': dirX = -rx; dirY = 0; dirZ = -rz; break;
-      case 'D': dirX = rx; dirY = 0; dirZ = rz; break;
+    if (key === 'Q') {
+      dirX = 0; dirY = 1; dirZ = 0;
+    } else if (key === 'E') {
+      dirX = 0; dirY = -1; dirZ = 0;
+    } else {
+      const { rx, ry, rz, ux, uy, uz } = _getScreenDirs();
+      switch (key) {
+        case 'W': dirX = ux; dirY = uy; dirZ = uz; break;  // screen up
+        case 'S': dirX = -ux; dirY = -uy; dirZ = -uz; break; // screen down
+        case 'D': dirX = rx; dirY = ry; dirZ = rz; break;   // screen right
+        case 'A': dirX = -rx; dirY = -ry; dirZ = -rz; break; // screen left
+      }
     }
     const neighbor = _findNavTarget(selectedCube, dirX, dirY, dirZ);
     if (neighbor) {
-      selectedCube = neighbor;
-      highlightCube(neighbor);
-      selectedInfoEl.textContent = `Selected: [${neighbor.letter}] at (${neighbor.gx}, ${neighbor.gz})`;
-      audio.select();
-      updateGhostPreview();
-      advanceTutorial('navigate');
-    }
-    return true;
-  }
-
-  if (key === 'Q' || key === 'E') {
-    // Q = up, E = down (always world Y)
-    const dirY = key === 'Q' ? 1 : -1;
-    const neighbor = _findNavTarget(selectedCube, 0, dirY, 0);
-    if (neighbor) {
-      selectedCube = neighbor;
-      highlightCube(neighbor);
-      selectedInfoEl.textContent = `Selected: [${neighbor.letter}] at (${neighbor.gx}, ${neighbor.gz})`;
-      audio.select();
-      updateGhostPreview();
-      advanceTutorial('navigate');
+      _navTo(neighbor);
     }
     return true;
   }

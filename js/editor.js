@@ -342,13 +342,22 @@ scene.onPointerObservable.add((info) => {
 
     // Cursor preview
     const paintTools = ['floor', 'erase', 'wall', 'endzone', 'letterzone',
-                        'sticky', 'ice', 'ramp', 'impulse', 'moving'];
+                        'sticky', 'ice', 'ramp', 'impulse', 'moving',
+                        'destructible', 'spawner', 'powerup'];
     if (paintTools.includes(tool)) {
-      const hit = getGroundHit();
-      if (hit) {
+      // Try block face first, then ground
+      const bh = tool !== 'erase' ? getBlockHit() : null;
+      const adj = bh ? getAdjacentPos(bh) : null;
+      if (adj) {
         cursorMesh.setEnabled(true);
-        cursorMesh.position.set(hit.x + 0.5, hit.y + 0.5, hit.z + 0.5);
-      } else cursorMesh.setEnabled(false);
+        cursorMesh.position.set(adj.x + 0.5, adj.y + 0.5, adj.z + 0.5);
+      } else {
+        const hit = getGroundHit();
+        if (hit) {
+          cursorMesh.setEnabled(true);
+          cursorMesh.position.set(hit.x + 0.5, hit.y + 0.5, hit.z + 0.5);
+        } else cursorMesh.setEnabled(false);
+      }
     } else cursorMesh.setEnabled(false);
 
     // Drag-paint
@@ -380,56 +389,81 @@ function dragPaint() {
     return;
   }
 
-  const hit = getGroundHit();
-  if (!hit) return;
-  const pk = bkey(hit.x, hit.y, hit.z);
+  // Try block-face placement first
+  const bh = getBlockHit();
+  const adj = bh ? getAdjacentPos(bh) : null;
+  let px, py, pz;
+
+  if (adj) {
+    px = adj.x; py = adj.y; pz = adj.z;
+  } else {
+    const hit = getGroundHit();
+    if (!hit) return;
+    px = hit.x; py = hit.y; pz = hit.z;
+  }
+
+  const pk = bkey(px, py, pz);
   if (pk === lastPaintKey) return;
   lastPaintKey = pk;
 
-  if (tool === 'floor') addFloor(hit.x, hit.z, floorY);
-  else if (tool === 'letterzone') {
-    addBlock('letterzone', hit.x, hit.y, hit.z,
-      paintLzType === '-' ? mats.lzMinus : mats.lzPlus, getToolExtra('letterzone'));
-  } else {
-    const layer = getToolLayer(tool);
-    if (layer) addBlock(layer, hit.x, hit.y, hit.z, getToolMat(tool), getToolExtra(tool));
-  }
+  const layer = getToolLayer(tool);
+  const mat = tool === 'floor' ? getFloorMat(px, pz)
+    : tool === 'letterzone' ? (paintLzType === '-' ? mats.lzMinus : mats.lzPlus)
+    : getToolMat(tool);
+  addBlock(layer, px, py, pz, mat, getToolExtra(tool));
   autoSave();
+}
+
+// Get adjacent block position from a face hit
+function getAdjacentPos(blockHit) {
+  if (!blockHit || !blockHit.normal) return null;
+  const entry = blocks[blockHit.md.type]?.get(blockHit.md.key);
+  if (!entry) return null;
+  const n = blockHit.normal;
+  // Determine which face was hit by largest normal component
+  const ax = Math.abs(n.x), ay = Math.abs(n.y), az = Math.abs(n.z);
+  let dx = 0, dy = 0, dz = 0;
+  if (ay >= ax && ay >= az) dy = n.y > 0 ? 1 : -1;
+  else if (ax >= az) dx = n.x > 0 ? 1 : -1;
+  else dz = n.z > 0 ? 1 : -1;
+  return { x: entry.x + dx, y: entry.y + dy, z: entry.z + dz };
 }
 
 function handleToolClick() {
   const groundHit = getGroundHit();
   const blockHit = getBlockHit();
 
-  switch (tool) {
-    case 'floor':
-      if (groundHit) { addFloor(groundHit.x, groundHit.z, floorY); autoSave(); }
-      break;
+  // For placement tools: try block-face placement first, then ground
+  const placementTools = ['floor', 'wall', 'sticky', 'ice', 'destructible',
+    'endzone', 'letterzone', 'ramp', 'impulse', 'moving', 'spawner', 'powerup'];
 
-    case 'wall': case 'sticky': case 'ice': case 'destructible': {
-      const layer = getToolLayer(tool);
-      // Click existing block of same type to stack on top
-      if (blockHit && blockHit.md.type === layer) {
-        const e = blocks[layer].get(blockHit.md.key);
-        if (e) { addBlock(layer, e.x, e.y + 1, e.z, getToolMat(tool)); autoSave(); }
-      } else if (groundHit) {
-        addBlock(layer, groundHit.x, groundHit.y, groundHit.z, getToolMat(tool));
-        autoSave();
-      }
-      break;
-    }
-
-    case 'endzone': case 'letterzone': case 'ramp': case 'impulse': case 'moving':
-      if (groundHit) {
+  if (placementTools.includes(tool)) {
+    // Minecraft-style: click a block face to place adjacent
+    if (blockHit && blockHit.md.type !== 'zipline') {
+      const adj = getAdjacentPos(blockHit);
+      if (adj) {
         const layer = getToolLayer(tool);
-        const mat = tool === 'letterzone'
-          ? (paintLzType === '-' ? mats.lzMinus : mats.lzPlus)
+        const mat = tool === 'floor' ? getFloorMat(adj.x, adj.z)
+          : tool === 'letterzone' ? (paintLzType === '-' ? mats.lzMinus : mats.lzPlus)
           : getToolMat(tool);
-        addBlock(layer, groundHit.x, groundHit.y, groundHit.z, mat, getToolExtra(tool));
+        addBlock(layer, adj.x, adj.y, adj.z, mat, getToolExtra(tool));
         autoSave();
+        return;
       }
-      break;
+    }
+    // Fallback: ground placement
+    if (groundHit) {
+      const layer = getToolLayer(tool);
+      const mat = tool === 'floor' ? getFloorMat(groundHit.x, groundHit.z)
+        : tool === 'letterzone' ? (paintLzType === '-' ? mats.lzMinus : mats.lzPlus)
+        : getToolMat(tool);
+      addBlock(layer, groundHit.x, groundHit.y, groundHit.z, mat, getToolExtra(tool));
+      autoSave();
+    }
+    return;
+  }
 
+  switch (tool) {
     case 'erase':
       if (blockHit) {
         const md = blockHit.md;

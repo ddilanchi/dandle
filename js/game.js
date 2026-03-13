@@ -1,7 +1,7 @@
 import { getRandomWord, isValidWord, getWordTypes, isVerb, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v5.4.1';
+const VERSION = 'v5.4.2';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -1207,6 +1207,8 @@ function _navTo(cube) {
   selectedCube = cube;
   highlightCube(cube);
   selectedInfoEl.textContent = `Selected: [${cube.letter}] at (${cube.gx}, ${cube.gz})`;
+  inputContainer.classList.remove('hidden');
+  wordInput.focus();
   audio.select();
   updateGhostPreview();
   advanceTutorial('navigate');
@@ -1565,11 +1567,15 @@ scene.onPointerObservable.add((pointerInfo) => {
     audio.select();
     advanceTutorial('select');
   } else {
-    selectedCube = null;
-    clearHighlight();
-    removeDirectionArrow();
-    selectedInfoEl.textContent = '';
-    inputContainer.classList.add('hidden');
+    // Clicking empty space: keep selection and input active if a cube is selected
+    if (selectedCube) {
+      wordInput.focus();
+    } else {
+      clearHighlight();
+      removeDirectionArrow();
+      selectedInfoEl.textContent = '';
+      inputContainer.classList.add('hidden');
+    }
   }
       break;
     }

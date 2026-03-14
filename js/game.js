@@ -1,7 +1,7 @@
 import { getRandomWord, isValidWord, getWordTypes, isVerb, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v5.9.5';
+const VERSION = 'v5.9.6';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -2179,8 +2179,8 @@ const BUILTIN_LEVELS = [
     floor: {
       type: 'regions', regions: [
         { xMin: -6, xMax:  3, zMin: -4, zMax: 4, y:  8 }, // starting platform
-        { xMin: 21, xMax: 26, zMin: -4, zMax: 4, y: -1 }, // ice lane (1 below ground)
-        { xMin: 31, xMax: 36, zMin: -4, zMax: 4, y: -1 }, // end zone landing
+        { xMin: 21, xMax: 26, zMin: -4, zMax: 4, y: -2 }, // ice lane (top face at y=-1)
+        { xMin: 31, xMax: 36, zMin: -4, zMax: 4, y: -2 }, // end zone landing
       ]
     },
     endZone: { x: 33, z: 0, width: 4, depth: 6, elevation: -1 },
@@ -2188,9 +2188,9 @@ const BUILTIN_LEVELS = [
     ramps: Array.from({ length: 18 }, (_, i) =>
       [-2, -1, 0, 1, 2].map(dz => ({ x: 3 + i, y: 7.5 - i * 0.5, z: dz, slope: '2:1', direction: '+x', icy: true }))
     ).flat(),
-    // Ice lane (y=-1): 5 blocks leading to the gap
+    // Ice lane (y=-2, top face at y=-1): 5 blocks leading to the gap
     iceBlocks: Array.from({ length: 5 }, (_, i) =>
-      [-2, -1, 0, 1, 2].map(dz => ({ x: 21 + i, y: -1, z: dz }))
+      [-2, -1, 0, 1, 2].map(dz => ({ x: 21 + i, y: -2, z: dz }))
     ).flat(),
     // Gap: x=26..30 (5 blocks, no floor) — need momentum to cross!
   },

@@ -1,7 +1,7 @@
 import { getRandomWord, isValidWord, getWordTypes, isVerb, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v5.9.7';
+const VERSION = 'v5.9.8';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -220,6 +220,8 @@ function makeLetterMaterial(letter, bgColor, borderColor, textColor) {
   const mat = new BABYLON.StandardMaterial('letterMat_' + letter + '_' + Math.random(), scene);
   const dataUrl = _makeCanvasTex(letter, bgColor, borderColor, textColor);
   const tex = new BABYLON.Texture(dataUrl, scene, false, true);
+  tex.vScale = -1;
+  tex.vOffset = 1;
   mat.diffuseTexture = tex;
   _matte(mat);
   return mat;

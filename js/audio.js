@@ -2,11 +2,21 @@ export class AudioManager {
   constructor() {
     this.ctx = null;
     this.initialized = false;
+    this._sfxGain = null;
+    this._masterMusicGain = null;
+    this._musicMuted = false;
+    this._sfxMuted = false;
   }
 
   init() {
     if (this.initialized) return;
     this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+    this._sfxGain = this.ctx.createGain();
+    this._sfxGain.gain.value = this._sfxMuted ? 0 : 1;
+    this._sfxGain.connect(this.ctx.destination);
+    this._masterMusicGain = this.ctx.createGain();
+    this._masterMusicGain.gain.value = this._musicMuted ? 0 : 1;
+    this._masterMusicGain.connect(this.ctx.destination);
     this.initialized = true;
   }
 
@@ -24,7 +34,7 @@ export class AudioManager {
     o.frequency.exponentialRampToValueAtTime(1200, this.ctx.currentTime + 0.05);
     g.gain.setValueAtTime(0.15, this.ctx.currentTime);
     g.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.1);
-    o.connect(g).connect(this.ctx.destination);
+    o.connect(g).connect(this._sfxGain);
     o.start();
     o.stop(this.ctx.currentTime + 0.1);
   }
@@ -41,7 +51,7 @@ export class AudioManager {
     o.frequency.exponentialRampToValueAtTime(80, t + 0.15);
     g.gain.setValueAtTime(0.3, t);
     g.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
-    o.connect(g).connect(this.ctx.destination);
+    o.connect(g).connect(this._sfxGain);
     o.start(t);
     o.stop(t + 0.2);
 
@@ -54,7 +64,7 @@ export class AudioManager {
     n.buffer = buf;
     ng.gain.setValueAtTime(0.2, t);
     ng.gain.exponentialRampToValueAtTime(0.001, t + 0.05);
-    n.connect(ng).connect(this.ctx.destination);
+    n.connect(ng).connect(this._sfxGain);
     n.start(t);
   }
 
@@ -71,7 +81,7 @@ export class AudioManager {
     n.buffer = buf;
     g.gain.setValueAtTime(0.25, t);
     g.gain.exponentialRampToValueAtTime(0.001, t + 0.1);
-    n.connect(g).connect(this.ctx.destination);
+    n.connect(g).connect(this._sfxGain);
     n.start(t);
   }
 
@@ -98,7 +108,7 @@ export class AudioManager {
     g.gain.exponentialRampToValueAtTime(0.5, t + 0.15);
     g.gain.setValueAtTime(0.45, t + duration - 0.3);
     g.gain.exponentialRampToValueAtTime(0.001, t + duration);
-    noise.connect(filt).connect(g).connect(this.ctx.destination);
+    noise.connect(filt).connect(g).connect(this._sfxGain);
     noise.start(t);
     noise.stop(t + duration + 0.05);
 
@@ -110,7 +120,7 @@ export class AudioManager {
     o.frequency.exponentialRampToValueAtTime(40, t + 0.3);
     og.gain.setValueAtTime(0.4, t);
     og.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
-    o.connect(og).connect(this.ctx.destination);
+    o.connect(og).connect(this._sfxGain);
     o.start(t); o.stop(t + 0.3);
 
     // Countdown beeps — one per second of thrust
@@ -121,7 +131,7 @@ export class AudioManager {
       bo.frequency.value = 1200 - i * 80;
       bg.gain.setValueAtTime(0.12, t + i);
       bg.gain.exponentialRampToValueAtTime(0.001, t + i + 0.08);
-      bo.connect(bg).connect(this.ctx.destination);
+      bo.connect(bg).connect(this._sfxGain);
       bo.start(t + i); bo.stop(t + i + 0.1);
     }
 
@@ -133,7 +143,7 @@ export class AudioManager {
     co.frequency.exponentialRampToValueAtTime(40, t + duration + 0.25);
     cg.gain.setValueAtTime(0.3, t + duration);
     cg.gain.exponentialRampToValueAtTime(0.001, t + duration + 0.25);
-    co.connect(cg).connect(this.ctx.destination);
+    co.connect(cg).connect(this._sfxGain);
     co.start(t + duration); co.stop(t + duration + 0.3);
   }
 
@@ -155,7 +165,7 @@ export class AudioManager {
     const g = this.ctx.createGain();
     g.gain.setValueAtTime(0.2, t);
     g.gain.exponentialRampToValueAtTime(0.001, t + 0.4);
-    n.connect(f).connect(g).connect(this.ctx.destination);
+    n.connect(f).connect(g).connect(this._sfxGain);
     n.start(t);
     n.stop(t + 0.4);
   }
@@ -172,7 +182,7 @@ export class AudioManager {
       g.gain.setValueAtTime(0, t + i * 0.15);
       g.gain.linearRampToValueAtTime(0.2, t + i * 0.15 + 0.05);
       g.gain.exponentialRampToValueAtTime(0.001, t + i * 0.15 + 0.5);
-      o.connect(g).connect(this.ctx.destination);
+      o.connect(g).connect(this._sfxGain);
       o.start(t + i * 0.15);
       o.stop(t + i * 0.15 + 0.5);
     });
@@ -203,7 +213,7 @@ export class AudioManager {
     n.buffer = buf;
     ng.gain.setValueAtTime(0.15, t);
     ng.gain.exponentialRampToValueAtTime(0.001, t + 0.02);
-    n.connect(ng).connect(this.ctx.destination);
+    n.connect(ng).connect(this._sfxGain);
     n.start(t);
   }
 
@@ -217,7 +227,7 @@ export class AudioManager {
     o.frequency.exponentialRampToValueAtTime(100, t + 0.2);
     g.gain.setValueAtTime(0.12, t);
     g.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
-    o.connect(g).connect(this.ctx.destination);
+    o.connect(g).connect(this._sfxGain);
     o.start(t);
     o.stop(t + 0.2);
   }
@@ -234,7 +244,7 @@ export class AudioManager {
     o.frequency.exponentialRampToValueAtTime(20, t + 0.8);
     g.gain.setValueAtTime(0.5, t);
     g.gain.exponentialRampToValueAtTime(0.001, t + 1.0);
-    o.connect(g).connect(this.ctx.destination);
+    o.connect(g).connect(this._sfxGain);
     o.start(t);
     o.stop(t + 1.0);
 
@@ -249,7 +259,7 @@ export class AudioManager {
     n.buffer = buf;
     ng.gain.setValueAtTime(0.4, t);
     ng.gain.exponentialRampToValueAtTime(0.001, t + 0.5);
-    n.connect(ng).connect(this.ctx.destination);
+    n.connect(ng).connect(this._sfxGain);
     n.start(t);
 
     // High shatter
@@ -260,7 +270,7 @@ export class AudioManager {
     o2.frequency.exponentialRampToValueAtTime(100, t + 0.3);
     g2.gain.setValueAtTime(0.15, t);
     g2.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
-    o2.connect(g2).connect(this.ctx.destination);
+    o2.connect(g2).connect(this._sfxGain);
     o2.start(t);
     o2.stop(t + 0.3);
   }
@@ -309,7 +319,7 @@ export class AudioManager {
 
     this._musicGain = this.ctx.createGain();
     this._musicGain.gain.value = 0.07;
-    this._musicGain.connect(this.ctx.destination);
+    this._musicGain.connect(this._masterMusicGain);
 
     this._scheduleLoop();
   }
@@ -318,11 +328,21 @@ export class AudioManager {
     this._musicPlaying = false;
     if (this._musicTimer) { clearTimeout(this._musicTimer); this._musicTimer = null; }
     if (this._musicGain) {
-      try { this._musicGain.gain.linearRampToValueAtTime(0, (this.ctx?.currentTime || 0) + 0.4); } catch (e) {}
+      try { this._musicGain.gain.linearRampToValueAtTime(0, (this.ctx?.currentTime || 0) + 0.4); } catch (e) { }
     }
   }
 
   setMusicIntensity(cubeCount) { this._cubeCount = cubeCount; }
+
+  setMusicMuted(muted) {
+    this._musicMuted = muted;
+    if (this._masterMusicGain) this._masterMusicGain.gain.value = muted ? 0 : 1;
+  }
+
+  setSfxMuted(muted) {
+    this._sfxMuted = muted;
+    if (this._sfxGain) this._sfxGain.gain.value = muted ? 0 : 1;
+  }
 
   _getBeatDur() {
     // Slightly faster as cubes accumulate
@@ -446,7 +466,7 @@ export class AudioManager {
     const bar = Math.floor(beat / 4) % 4;
     const pos = beat % 4;
     // Walking patterns: up on even bars, down on odd bars
-    const walkUp   = [0, 2, 4, 6]; // scale degrees (index into scale, bass octave)
+    const walkUp = [0, 2, 4, 6]; // scale degrees (index into scale, bass octave)
     const walkDown = [7, 5, 3, 1];
     const bassOct = 8; // index offset into scale for bass register (oct -1)
     const idx = bassOct + (bar % 2 === 0 ? walkUp[pos] : walkDown[pos]);

@@ -25,7 +25,7 @@ let gameStarted = false;
 let paused = false;
 
 // ── Settings ──
-const DEFAULT_SETTINGS = { shadows: true, fog: true };
+const DEFAULT_SETTINGS = { shadows: true, fog: true, music: true, sfx: true };
 function loadSettings() {
   try { return { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem('dandle_settings') || '{}') }; }
   catch { return { ...DEFAULT_SETTINGS }; }
@@ -113,6 +113,8 @@ setupShadows();
 
 // Fog
 function applySettings(s) {
+  audio.setMusicMuted(!s.music);
+  audio.setSfxMuted(!s.sfx);
   if (s.fog) {
     scene.fogMode = BABYLON.Scene.FOGMODE_LINEAR;
     scene.fogColor = new BABYLON.Color3(0.529, 0.808, 0.922);
@@ -167,7 +169,7 @@ const FLYING_LETTER_SPEED = 8;
 let endZone = null;
 let endZoneBox = null;
 let directionArrow = null;
-let currentDir = 'x+';
+let currentDir = 'y+';
 let currentLevel = 1;
 const levelObstacles = [];
 const letterZones = [];
@@ -393,7 +395,7 @@ function connectCubeToNeighbors(cube) {
 function disconnectCube(cube) {
   if (!cube.constraints) return;
   for (const c of cube.constraints) {
-    try { cube.aggregate.body.removeConstraint(c.constraint); } catch (e) {}
+    try { cube.aggregate.body.removeConstraint(c.constraint); } catch (e) { }
     // Remove from the other side too
     if (c.otherCube && c.otherCube.constraints) {
       c.otherCube.constraints = c.otherCube.constraints.filter(oc => oc.constraint !== c.constraint);
@@ -858,7 +860,8 @@ function addStickyBlock(x, y, z) {
   mesh.isPickable = false;
   levelObstacles.push(mesh);
   const agg = new BABYLON.PhysicsAggregate(mesh, BABYLON.PhysicsShapeType.BOX, {
-    mass: 0, friction: 3.0, restitution: 0.01 }, scene);
+    mass: 0, friction: 3.0, restitution: 0.01
+  }, scene);
   setCollisionFiltering(agg, CG_GROUND, CG_STRUCTURE | CG_FLYING | CG_DEBRIS);
   return mesh;
 }
@@ -878,7 +881,8 @@ function addIceBlock(x, y, z) {
   mesh.isPickable = false;
   levelObstacles.push(mesh);
   const agg = new BABYLON.PhysicsAggregate(mesh, BABYLON.PhysicsShapeType.BOX, {
-    mass: 0, friction: 0.02, restitution: 0.1 }, scene);
+    mass: 0, friction: 0.02, restitution: 0.1
+  }, scene);
   setCollisionFiltering(agg, CG_GROUND, CG_STRUCTURE | CG_FLYING | CG_DEBRIS);
   return mesh;
 }
@@ -923,7 +927,8 @@ function addRamp(x, y, z, slope, direction) {
   levelObstacles.push(mesh);
 
   const agg = new BABYLON.PhysicsAggregate(mesh, BABYLON.PhysicsShapeType.BOX, {
-    mass: 0, friction: STATIC_FRICTION * 0.5, restitution: 0.02 }, scene);
+    mass: 0, friction: STATIC_FRICTION * 0.5, restitution: 0.02
+  }, scene);
   setCollisionFiltering(agg, CG_GROUND, CG_STRUCTURE | CG_FLYING | CG_DEBRIS);
   return mesh;
 }
@@ -947,7 +952,8 @@ function addImpulseBlock(x, y, z, direction, strength) {
   arrowMat.emissiveColor = new BABYLON.Color3(0.8, 0.6, 0);
   arrowMat.alpha = 0.7;
   const arrow = BABYLON.MeshBuilder.CreateCylinder('impArrow', {
-    diameterTop: 0, diameterBottom: 0.35, height: 0.5, tessellation: 8 }, scene);
+    diameterTop: 0, diameterBottom: 0.35, height: 0.5, tessellation: 8
+  }, scene);
   arrow.material = arrowMat;
   arrow.parent = mesh;
   const dv = _dirToVec(direction);
@@ -981,7 +987,8 @@ function addMovingBlock(x, y, z, direction, distance, speed) {
   const endPos = startPos.add(dv.scale(distance));
 
   const agg = new BABYLON.PhysicsAggregate(mesh, BABYLON.PhysicsShapeType.BOX, {
-    mass: 0, friction: STATIC_FRICTION, restitution: 0.02 }, scene);
+    mass: 0, friction: STATIC_FRICTION, restitution: 0.02
+  }, scene);
   setCollisionFiltering(agg, CG_GROUND, CG_STRUCTURE | CG_FLYING | CG_DEBRIS);
   // Make kinematic so we can move it
   agg.body.setMotionType(BABYLON.PhysicsMotionType.ANIMATED);
@@ -1002,7 +1009,8 @@ function addDestructibleBlock(x, y, z) {
   mesh.isPickable = false;
   levelObstacles.push(mesh);
   const agg = new BABYLON.PhysicsAggregate(mesh, BABYLON.PhysicsShapeType.BOX, {
-    mass: 0, friction: STATIC_FRICTION, restitution: 0.02 }, scene);
+    mass: 0, friction: STATIC_FRICTION, restitution: 0.02
+  }, scene);
   setCollisionFiltering(agg, CG_GROUND, CG_STRUCTURE | CG_FLYING | CG_DEBRIS);
   mesh.metadata = { destructible: true, health: 1, agg };
   return mesh;
@@ -1021,9 +1029,11 @@ function addSpawner(x, y, z, objectType, interval, velocity) {
   levelObstacles.push(mesh);
 
   const dv = velocity ? new BABYLON.Vector3(velocity.x || 0, velocity.y || 0, velocity.z || 0)
-                      : new BABYLON.Vector3(0, 3, 0);
-  const spawner = { mesh, objectType: objectType || 'ball', interval: interval || 5,
-                    lastSpawn: 0, spawnVelocity: dv, spawned: [] };
+    : new BABYLON.Vector3(0, 3, 0);
+  const spawner = {
+    mesh, objectType: objectType || 'ball', interval: interval || 5,
+    lastSpawn: 0, spawnVelocity: dv, spawned: []
+  };
   spawnerTimers.push(spawner);
   return mesh;
 }
@@ -1056,7 +1066,8 @@ function spawnPhysicsObject(spawner) {
     case 'cylinder': {
       const d = 0.3 + Math.random() * 0.3;
       objMesh = BABYLON.MeshBuilder.CreateCylinder('cyl_' + id, {
-        diameter: d * 2, height: 0.6 + Math.random() * 0.4, tessellation: 12 }, scene);
+        diameter: d * 2, height: 0.6 + Math.random() * 0.4, tessellation: 12
+      }, scene);
       const mat = _matte(new BABYLON.StandardMaterial('cylM_' + id, scene));
       mat.diffuseColor = new BABYLON.Color3(0.6, 0.4, 0.2);
       objMesh.material = mat;
@@ -1066,7 +1077,8 @@ function spawnPhysicsObject(spawner) {
     case 'cone': {
       objMesh = BABYLON.MeshBuilder.CreateCylinder('cone_' + id, {
         diameterTop: 0, diameterBottom: 0.5 + Math.random() * 0.3,
-        height: 0.6 + Math.random() * 0.4, tessellation: 10 }, scene);
+        height: 0.6 + Math.random() * 0.4, tessellation: 10
+      }, scene);
       const mat = _matte(new BABYLON.StandardMaterial('coneM_' + id, scene));
       mat.diffuseColor = new BABYLON.Color3(0.8, 0.6, 0.1);
       objMesh.material = mat;
@@ -1092,7 +1104,8 @@ function spawnPhysicsObject(spawner) {
   objMesh.isPickable = false;
 
   const agg = new BABYLON.PhysicsAggregate(objMesh, shapeType, {
-    mass, friction, restitution }, scene);
+    mass, friction, restitution
+  }, scene);
   setCollisionFiltering(agg, CG_DEBRIS, CG_GROUND | CG_STRUCTURE | CG_DEBRIS);
   agg.body.setLinearVelocity(spawner.spawnVelocity);
 
@@ -1632,7 +1645,7 @@ function _findComponents(cubeList) {
       if (visited.has(ck)) continue;
       visited.add(ck);
       component.push(cur);
-      for (const [ddx, ddy, ddz] of [[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]]) {
+      for (const [ddx, ddy, ddz] of [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]) {
         const nk = `${cur.gx + ddx},${(cur.gy || 0) + ddy},${cur.gz + ddz}`;
         if (cubeMap.has(nk) && !visited.has(nk)) stack.push(cubeMap.get(nk));
       }
@@ -1660,7 +1673,7 @@ function _checkDisconnected() {
     const ck = key(cur);
     if (visited.has(ck)) continue;
     visited.add(ck);
-    for (const [dx, dy, dz] of [[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]]) {
+    for (const [dx, dy, dz] of [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]) {
       const nk = `${cur.gx + dx},${(cur.gy || 0) + dy},${cur.gz + dz}`;
       if (cubeMap.has(nk) && !visited.has(nk)) stack.push(cubeMap.get(nk));
     }
@@ -1692,7 +1705,7 @@ function _spawnDebris(debrisCubes) {
       if (!active.constraints) continue;
       active.constraints = active.constraints.filter(con => {
         if (con.otherCube === c) {
-          try { active.aggregate.body.removeConstraint(con.constraint); } catch (e) {}
+          try { active.aggregate.body.removeConstraint(con.constraint); } catch (e) { }
           return false;
         }
         return true;
@@ -2092,17 +2105,21 @@ const BUILTIN_LEVELS = [
   },
   { // Level 4
     name: 'Level 4', hint: 'Two islands! Bridge the gap or launch across!',
-    floor: { type: 'regions', regions: [
-      { xMin: -8, xMax: 5, zMin: -5, zMax: 5, y: 0 },
-      { xMin: 9, xMax: 18, zMin: -5, zMax: 5, y: 0 },
-    ]},
+    floor: {
+      type: 'regions', regions: [
+        { xMin: -8, xMax: 5, zMin: -5, zMax: 5, y: 0 },
+        { xMin: 9, xMax: 18, zMin: -5, zMax: 5, y: 0 },
+      ]
+    },
     endZone: { x: 14, z: 0, width: 4, depth: 4 },
   },
   { // Level 5
     name: 'Level 5', hint: 'Letter zones! -X deletes words with X. +X deletes words WITHOUT X.',
-    floor: { type: 'regions', regions: [
-      { xMin: -8, xMax: 22, zMin: -2, zMax: 2, y: 0 },
-    ]},
+    floor: {
+      type: 'regions', regions: [
+        { xMin: -8, xMax: 22, zMin: -2, zMax: 2, y: 0 },
+      ]
+    },
     endZone: { x: 18, z: 0, width: 4, depth: 4, elevation: 8 },
     letterZones: [
       { x: 5, z: 0, size: 3, type: '-', letter: 'random' },
@@ -2114,10 +2131,12 @@ const BUILTIN_LEVELS = [
   },
   { // Level 6
     name: 'Level 6', hint: 'Zip line! Build a hook to slide down the pole!',
-    floor: { type: 'regions', regions: [
-      { xMin: -6, xMax: 4, zMin: -4, zMax: 4, y: 10 },
-      { xMin: 20, xMax: 30, zMin: -4, zMax: 4, y: 0 },
-    ]},
+    floor: {
+      type: 'regions', regions: [
+        { xMin: -6, xMax: 4, zMin: -4, zMax: 4, y: 10 },
+        { xMin: 20, xMax: 30, zMin: -4, zMax: 4, y: 0 },
+      ]
+    },
     startY: 10,
     endZone: { x: 25, z: 0, width: 4, depth: 4 },
     zipLines: [{ x1: 3, y1: 12, z1: 0, x2: 21, y2: 2, z2: 0, radius: 0.3 }],
@@ -2226,6 +2245,7 @@ function startLevel() {
   levelComplete = false;
   levelFalling = false;
   lettersUsed = 0;
+  currentDir = 'y+';
   levelCompleteEl.classList.add('hidden');
   inputContainer.classList.add('hidden');
   selectedInfoEl.textContent = '';
@@ -2312,20 +2332,20 @@ scene.onPointerObservable.add((pointerInfo) => {
         selectedInfoEl.textContent = `Selected: [${cube.letter}] at (${cube.gx}, ${cube.gz})`;
         inputContainer.classList.remove('hidden');
         wordInput.value = '';
-    wordInput.focus();
-    audio.select();
-    advanceTutorial('select');
-  } else {
-    // Clicking empty space: keep selection and input active if a cube is selected
-    if (selectedCube) {
-      wordInput.focus();
-    } else {
-      clearHighlight();
-      removeDirectionArrow();
-      selectedInfoEl.textContent = '';
-      inputContainer.classList.add('hidden');
-    }
-  }
+        wordInput.focus();
+        audio.select();
+        advanceTutorial('select');
+      } else {
+        // Clicking empty space: keep selection and input active if a cube is selected
+        if (selectedCube) {
+          wordInput.focus();
+        } else {
+          clearHighlight();
+          removeDirectionArrow();
+          selectedInfoEl.textContent = '';
+          inputContainer.classList.add('hidden');
+        }
+      }
       break;
     }
   }
@@ -2362,12 +2382,14 @@ const settingsClose = document.getElementById('settings-close');
 function syncSettingsUI() {
   document.getElementById('setting-shadows').checked = currentSettings.shadows;
   document.getElementById('setting-fog').checked = currentSettings.fog;
+  document.getElementById('setting-music').checked = currentSettings.music;
+  document.getElementById('setting-sfx').checked = currentSettings.sfx;
 }
 
 settingsBtn.addEventListener('click', () => { syncSettingsUI(); settingsScreen.classList.remove('hidden'); });
 settingsClose.addEventListener('click', () => settingsScreen.classList.add('hidden'));
 
-['shadows', 'fog'].forEach(key => {
+['shadows', 'fog', 'music', 'sfx'].forEach(key => {
   document.getElementById(`setting-${key}`).addEventListener('change', (e) => {
     currentSettings[key] = e.target.checked;
     applySettings(currentSettings);
@@ -2447,7 +2469,7 @@ function updatePhysics() {
     for (const c of cubes) {
       if (!c.aggregate?.body) continue;
       const v = c.aggregate.body.getLinearVelocity();
-      const speed = Math.sqrt(v.x*v.x + v.y*v.y + v.z*v.z);
+      const speed = Math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
       if (speed > maxVel) { maxVel = speed; maxVelCube = c; }
     }
     const first = cubes[0];
@@ -2497,8 +2519,8 @@ function updatePhysics() {
     for (const c of cubes) {
       const wp = c.mesh.position;
       if (wp.x >= endZoneBox.minimum.x && wp.x <= endZoneBox.maximum.x &&
-          wp.y >= endZoneBox.minimum.y && wp.y <= endZoneBox.maximum.y &&
-          wp.z >= endZoneBox.minimum.z && wp.z <= endZoneBox.maximum.z) {
+        wp.y >= endZoneBox.minimum.y && wp.y <= endZoneBox.maximum.y &&
+        wp.z >= endZoneBox.minimum.z && wp.z <= endZoneBox.maximum.z) {
         levelComplete = true;
         unlockNextLevel(currentLevel);
         const isLast = currentLevel >= TOTAL_LEVELS;

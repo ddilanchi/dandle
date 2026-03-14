@@ -469,7 +469,8 @@ body {
 }
 
 #level-grid {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(4, 90px);
   gap: 20px;
 }
 

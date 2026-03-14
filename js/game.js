@@ -1,7 +1,7 @@
 import { getRandomWord, isValidWord, getWordTypes, isVerb, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v5.9.0';
+const VERSION = 'v5.9.1';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');

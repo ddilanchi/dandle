@@ -1,7 +1,7 @@
 import { getRandomWord, isValidWord, getWordTypes, isVerb, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v5.9.4';
+const VERSION = 'v5.9.5';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -906,7 +906,7 @@ function _dirToRotY(dir) {
   return 0;
 }
 
-function addRamp(x, y, z, slope, direction) {
+function addRamp(x, y, z, slope, direction, icy = false) {
   const sH = slope === '2:1' ? 0.5 : 1.0; // slope height
   const rotY = _dirToRotY(direction);
 
@@ -937,10 +937,18 @@ function addRamp(x, y, z, slope, direction) {
   vd.applyToMesh(mesh);
 
   const mat = _matte(new BABYLON.StandardMaterial('rampMat', scene));
-  const isGreen = (Math.round(x) + Math.round(z)) % 2 === 0;
-  mat.diffuseColor = isGreen
-    ? new BABYLON.Color3(0.416, 0.678, 0.478)
-    : new BABYLON.Color3(0.925, 0.878, 0.753);
+  if (icy) {
+    mat.diffuseColor = new BABYLON.Color3(0.7, 0.9, 1.0);
+    mat.emissiveColor = new BABYLON.Color3(0.1, 0.15, 0.2);
+    mat.alpha = 0.85;
+    mat.specularColor = new BABYLON.Color3(1, 1, 1);
+    mat.specularPower = 64;
+  } else {
+    const isGreen = (Math.round(x) + Math.round(z)) % 2 === 0;
+    mat.diffuseColor = isGreen
+      ? new BABYLON.Color3(0.416, 0.678, 0.478)
+      : new BABYLON.Color3(0.925, 0.878, 0.753);
+  }
   mesh.material = mat;
   mesh.position.set(x + 0.5, y + sH / 2, z + 0.5);
   mesh.rotation.y = rotY;
@@ -951,7 +959,7 @@ function addRamp(x, y, z, slope, direction) {
   levelObstacles.push(mesh);
 
   const agg = new BABYLON.PhysicsAggregate(mesh, BABYLON.PhysicsShapeType.CONVEX_HULL, {
-    mass: 0, friction: STATIC_FRICTION * 0.5, restitution: 0.02
+    mass: 0, friction: icy ? 0.02 : STATIC_FRICTION * 0.5, restitution: 0.02
   }, scene);
   setCollisionFiltering(agg, CG_GROUND, CG_STRUCTURE | CG_FLYING | CG_DEBRIS);
   return mesh;
@@ -2166,23 +2174,25 @@ const BUILTIN_LEVELS = [
     zipLines: [{ x1: 3, y1: 12, z1: 0, x2: 21, y2: 2, z2: 0, radius: 0.3 }],
   },
   { // Level 7
-    name: 'Level 7', hint: 'Slide down to the red zone!',
+    name: 'Level 7', hint: 'Slide down, cross the gap, reach the red zone!',
     startY: 8,
     floor: {
       type: 'regions', regions: [
-        { xMin: -6, xMax:  3, zMin: -4, zMax: 4, y: 8 }, // starting platform
-        { xMin: 19, xMax: 33, zMin: -4, zMax: 4, y: 0 }, // ice lane + end zone
+        { xMin: -6, xMax:  3, zMin: -4, zMax: 4, y:  8 }, // starting platform
+        { xMin: 21, xMax: 26, zMin: -4, zMax: 4, y: -1 }, // ice lane (1 below ground)
+        { xMin: 31, xMax: 36, zMin: -4, zMax: 4, y: -1 }, // end zone landing
       ]
     },
-    endZone: { x: 30, z: 0, width: 4, depth: 6 },
-    // 16-step gradual ramp (2:1 slope, descends 0.5/step), 5 blocks wide
-    ramps: Array.from({ length: 16 }, (_, i) =>
-      [-2, -1, 0, 1, 2].map(dz => ({ x: 3 + i, y: 7.5 - i * 0.5, z: dz, slope: '2:1', direction: '+x' }))
+    endZone: { x: 33, z: 0, width: 4, depth: 6, elevation: -1 },
+    // 18-step icy ramp descending from y=7.5 to y=-1, 5 blocks wide
+    ramps: Array.from({ length: 18 }, (_, i) =>
+      [-2, -1, 0, 1, 2].map(dz => ({ x: 3 + i, y: 7.5 - i * 0.5, z: dz, slope: '2:1', direction: '+x', icy: true }))
     ).flat(),
-    // Ice covering the lane right up to the end zone
-    iceBlocks: Array.from({ length: 10 }, (_, i) =>
-      [-2, -1, 0, 1, 2].map(dz => ({ x: 19 + i, y: 0, z: dz }))
+    // Ice lane (y=-1): 5 blocks leading to the gap
+    iceBlocks: Array.from({ length: 5 }, (_, i) =>
+      [-2, -1, 0, 1, 2].map(dz => ({ x: 21 + i, y: -1, z: dz }))
     ).flat(),
+    // Gap: x=26..30 (5 blocks, no floor) — need momentum to cross!
   },
 ];
 
@@ -2251,7 +2261,7 @@ function loadLevelFromConfig(config) {
   for (const b of (config.iceBlocks || [])) addIceBlock(b.x, b.y, b.z);
 
   // Ramps
-  for (const r of (config.ramps || [])) addRamp(r.x, r.y, r.z, r.slope || '1:1', r.direction || '+x');
+  for (const r of (config.ramps || [])) addRamp(r.x, r.y, r.z, r.slope || '1:1', r.direction || '+x', r.icy || false);
 
   // Impulse blocks
   for (const b of (config.impulseBlocks || [])) addImpulseBlock(b.x, b.y, b.z, b.direction || '+x', b.strength || 10);

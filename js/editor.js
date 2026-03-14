@@ -5,28 +5,47 @@ const engine = new BABYLON.Engine(canvas, true);
 const scene = new BABYLON.Scene(engine);
 scene.clearColor = new BABYLON.Color4(0.1, 0.1, 0.18, 1);
 
-// ── Camera ──
-// Select mode: left-drag=orbit | Paint modes: right-drag=orbit
-// Two-finger scroll: zoom | Two-finger horizontal swipe: pan
-const camera = new BABYLON.ArcRotateCamera('cam', -Math.PI / 4, Math.PI / 3, 30,
-  new BABYLON.Vector3(0, 0, 0), scene);
-camera.attachControl(canvas, true);
-camera.lowerRadiusLimit = 5;
-camera.upperRadiusLimit = 120;
-camera.upperBetaLimit = Math.PI / 2 - 0.02;
-camera.wheelDeltaPercentage = 0.02;
-camera.panningSensibility = 30;
+// ── Camera (FPS-style fly cam) ──
+// Hold right-click + WASD/QE: fly  |  Scroll: dolly  |  Left-click: tool
+const camera = new BABYLON.FreeCamera('cam', new BABYLON.Vector3(0, 14, -18), scene);
+camera.setTarget(new BABYLON.Vector3(0, 2, 0));
 camera.minZ = 0.1;
-// Default: select mode — left-drag orbits
-camera.inputs.attached.pointers.buttons = [0, -1, -1];
+camera.fov = 0.9;
+// No attachControl — fully manual input
+canvas.addEventListener('contextmenu', e => e.preventDefault());
 
-// Two-finger horizontal swipe (trackpad) → pan camera
-canvas.addEventListener('wheel', (e) => {
-  if (Math.abs(e.deltaX) > 1) {
-    const d = e.deltaX * 0.03;
-    camera.target.x += d * Math.sin(camera.alpha);
-    camera.target.z -= d * Math.cos(camera.alpha);
-  }
+// Track held keys for WASD fly
+const keysHeld = new Set();
+window.addEventListener('keydown', e => keysHeld.add(e.code));
+window.addEventListener('keyup',   e => keysHeld.delete(e.code));
+
+// Right-click: mouse look
+let rightMouseDown = false;
+let lastMouseX = 0, lastMouseY = 0;
+canvas.addEventListener('mousedown', e => {
+  if (e.button !== 2) return;
+  rightMouseDown = true;
+  lastMouseX = e.clientX; lastMouseY = e.clientY;
+  canvas.style.cursor = 'crosshair';
+});
+canvas.addEventListener('mouseup', e => {
+  if (e.button !== 2) return;
+  rightMouseDown = false;
+  canvas.style.cursor = '';
+});
+canvas.addEventListener('mousemove', e => {
+  if (!rightMouseDown) return;
+  camera.rotation.y += (e.clientX - lastMouseX) * 0.003;
+  camera.rotation.x += (e.clientY - lastMouseY) * 0.003;
+  camera.rotation.x = Math.max(-1.4, Math.min(1.4, camera.rotation.x));
+  lastMouseX = e.clientX; lastMouseY = e.clientY;
+});
+
+// Scroll: dolly forward/back along view direction
+canvas.addEventListener('wheel', e => {
+  const y = camera.rotation.y, x = camera.rotation.x;
+  const fwd = new BABYLON.Vector3(Math.sin(y) * Math.cos(x), -Math.sin(x), Math.cos(y) * Math.cos(x));
+  camera.position.addInPlace(fwd.scale(-e.deltaY * 0.05));
 }, { passive: true });
 
 // ── Lights ──
@@ -338,7 +357,7 @@ scene.onPointerObservable.add((info) => {
   const evt = info.event;
 
   if (info.type === BABYLON.PointerEventTypes.POINTERDOWN) {
-    if (evt.button === 0) {
+    if (evt.button === 0 && !rightMouseDown) {
       mouseDownPos = { x: evt.clientX, y: evt.clientY };
       isDrag = false; isPointerDown = true; lastPaintKey = null;
     }
@@ -525,6 +544,7 @@ window.addEventListener('keydown', (e) => {
   }
 
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+  if (rightMouseDown) return; // camera fly mode — suppress tool shortcuts
   const k = e.key.toLowerCase();
   const toolMap = { v:'select', f:'floor', x:'erase', e:'endzone', w:'wall',
     l:'letterzone', z:'zipline', s:'sticky', i:'ice', r:'ramp', g:'impulse', m:'moving',
@@ -543,9 +563,6 @@ function setTool(t) {
   tool = t;
   ziplineFirstClick = null;
   cursorMesh.setEnabled(false);
-  // Select mode: left-drag orbits (safe — select never drag-paints)
-  // Paint/erase modes: right-drag orbits so left-drag can paint
-  camera.inputs.attached.pointers.buttons = t === 'select' ? [0, -1, -1] : [2, -1, 1];
   document.querySelectorAll('.tool-btn').forEach(b => b.classList.toggle('active', b.dataset.tool === t));
 }
 document.querySelectorAll('.tool-btn').forEach(btn => {
@@ -1061,5 +1078,18 @@ try {
   else { addDefaultFloor(); rebuildStartIndicators(); }
 } catch (e) { addDefaultFloor(); rebuildStartIndicators(); }
 
-engine.runRenderLoop(() => scene.render());
+engine.runRenderLoop(() => {
+  if (rightMouseDown) {
+    const spd = 0.2, y = camera.rotation.y;
+    const fwd   = new BABYLON.Vector3(Math.sin(y), 0, Math.cos(y));
+    const right = new BABYLON.Vector3(Math.cos(y), 0, -Math.sin(y));
+    if (keysHeld.has('KeyW')) camera.position.addInPlace(fwd.scale(spd));
+    if (keysHeld.has('KeyS')) camera.position.addInPlace(fwd.scale(-spd));
+    if (keysHeld.has('KeyA')) camera.position.addInPlace(right.scale(-spd));
+    if (keysHeld.has('KeyD')) camera.position.addInPlace(right.scale(spd));
+    if (keysHeld.has('KeyE')) camera.position.y += spd;
+    if (keysHeld.has('KeyQ')) camera.position.y -= spd;
+  }
+  scene.render();
+});
 window.addEventListener('resize', () => engine.resize());

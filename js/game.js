@@ -1,7 +1,7 @@
 import { getRandomWord, isValidWord, getWordTypes, isVerb, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v5.9.6';
+const VERSION = 'v5.9.7';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -507,31 +507,39 @@ function _placeNextLetter() {
   // Place this letter instantly at its grid position
   const l = q.letters[q.index];
 
-  // If this letter would go underground, lift everything up by 1
-  if (l.gy < 0) {
-    // Remember which cubes to animate and their current positions
+  // Predict the actual world Y of this letter (from neighbor's real physics position)
+  let predictedY = 0.5 + (l.gy || 0);
+  for (const other of cubes) {
+    const dx = Math.abs(l.gx - other.gx);
+    const dy = Math.abs((l.gy || 0) - (other.gy || 0));
+    const dz = Math.abs(l.gz - other.gz);
+    if (dx + dy + dz === 1) {
+      predictedY = other.mesh.position.y + ((l.gy || 0) - (other.gy || 0));
+      break;
+    }
+  }
+
+  // If the letter would land at or below ground, lift the whole structure up enough
+  if (predictedY < 1) {
+    const liftBy = Math.ceil(1 - predictedY);
     const liftCubes = cubes.map(c => ({ cube: c, startY: c.mesh.position.y }));
 
-    // Shift grid coords and physics positions up by 1
     for (const c of cubes) {
-      c.gy = (c.gy || 0) + 1;
-      const pos = c.mesh.position;
-      c.mesh.position.set(pos.x, pos.y + 1, pos.z);
-      if (c.aggregate && c.aggregate.body) {
+      c.gy = (c.gy || 0) + liftBy;
+      c.mesh.position.y += liftBy;
+      if (c.aggregate?.body) {
         c.aggregate.body.disablePreStep = false;
+        // Reset after one physics step so bodies return to dynamic simulation
+        const body = c.aggregate.body;
+        setTimeout(() => { if (body) body.disablePreStep = true; }, 50);
       }
     }
     for (const w of words) {
-      if (w.positions) {
-        for (const p of w.positions) p.gy = (p.gy || 0) + 1;
-      }
+      if (w.positions) for (const p of w.positions) p.gy = (p.gy || 0) + liftBy;
     }
-    for (const ll of q.letters) {
-      ll.gy += 1;
-    }
-    q.startGy += 1;
+    for (const ll of q.letters) ll.gy += liftBy;
+    q.startGy += liftBy;
 
-    // Squash-and-stretch bounce on each lifted cube
     for (const entry of liftCubes) {
       animations.push({
         cube: entry.cube,

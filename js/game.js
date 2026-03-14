@@ -1,7 +1,7 @@
 import { getRandomWord, isValidWord, getWordTypes, isVerb, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v5.9.2';
+const VERSION = 'v5.9.3';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -907,26 +907,47 @@ function _dirToRotY(dir) {
 }
 
 function addRamp(x, y, z, slope, direction) {
-  const ratio = slope === '2:1' ? 0.5 : 1.0;
-  const tiltAngle = Math.atan(ratio);
+  const sH = slope === '2:1' ? 0.5 : 1.0; // slope height
   const rotY = _dirToRotY(direction);
 
-  // Wedge approximation: tilted box
-  const mesh = BABYLON.MeshBuilder.CreateBox('ramp', { width: 1, height: 0.15, depth: 1 }, scene);
+  // Triangular prism (wedge): high end at local -X, low end at +X
+  // Centered at (0,0,0) so rotation around Y works correctly
+  const pos = [
+    -0.5, -sH/2, -0.5,  // 0 bottom-near-high
+     0.5, -sH/2, -0.5,  // 1 bottom-near-low
+     0.5, -sH/2,  0.5,  // 2 bottom-far-low
+    -0.5, -sH/2,  0.5,  // 3 bottom-far-high
+    -0.5,  sH/2, -0.5,  // 4 top-near-high
+    -0.5,  sH/2,  0.5,  // 5 top-far-high
+  ];
+  const idx = [
+    0, 1, 3,  3, 1, 2,  // bottom
+    0, 3, 4,  3, 5, 4,  // back face (high end, vertical)
+    4, 5, 1,  5, 2, 1,  // slope (the ramp surface)
+    0, 4, 1,            // near triangle
+    3, 2, 5,            // far triangle
+  ];
+  const nrm = new Array(pos.length).fill(0);
+  BABYLON.VertexData.ComputeNormals(pos, idx, nrm);
+
+  const vd = new BABYLON.VertexData();
+  vd.positions = pos; vd.indices = idx; vd.normals = nrm;
+
+  const mesh = new BABYLON.Mesh('ramp', scene);
+  vd.applyToMesh(mesh);
+
   const mat = _matte(new BABYLON.StandardMaterial('rampMat', scene));
   mat.diffuseColor = new BABYLON.Color3(0.55, 0.55, 0.45);
   mesh.material = mat;
-  mesh.position.set(x + 0.5, y + 0.25, z + 0.5);
-
-  // Tilt along the local X axis after rotating Y
+  mesh.position.set(x + 0.5, y + sH / 2, z + 0.5);
   mesh.rotation.y = rotY;
-  mesh.rotation.z = tiltAngle;
+  mesh.computeWorldMatrix(true);
 
   if (shadowGen) { shadowGen.addShadowCaster(mesh); mesh.receiveShadows = true; }
   mesh.isPickable = false;
   levelObstacles.push(mesh);
 
-  const agg = new BABYLON.PhysicsAggregate(mesh, BABYLON.PhysicsShapeType.BOX, {
+  const agg = new BABYLON.PhysicsAggregate(mesh, BABYLON.PhysicsShapeType.CONVEX_HULL, {
     mass: 0, friction: STATIC_FRICTION * 0.5, restitution: 0.02
   }, scene);
   setCollisionFiltering(agg, CG_GROUND, CG_STRUCTURE | CG_FLYING | CG_DEBRIS);

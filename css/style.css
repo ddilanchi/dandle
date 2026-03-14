@@ -47,6 +47,16 @@ body {
   text-transform: uppercase;
 }
 
+#letters-used {
+  background: rgba(0, 0, 0, 0.6);
+  color: #aaddff;
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-size: 15px;
+  font-weight: bold;
+  letter-spacing: 1px;
+}
+
 #restart-btn {
   background: rgba(0, 0, 0, 0.6);
   color: rgba(255, 255, 255, 0.7);
@@ -521,6 +531,13 @@ body {
 .level-btn .level-num {
   font-size: 28px;
   font-weight: 900;
+}
+
+.level-btn .level-score {
+  font-size: 9px;
+  letter-spacing: 0.5px;
+  color: #aaddff;
+  opacity: 0.85;
 }
 
 .level-btn .level-label {

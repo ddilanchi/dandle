@@ -1,7 +1,7 @@
 import { getRandomWord, isValidWord, getWordTypes, isVerb, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v5.9.8';
+const VERSION = 'v5.9.9';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -14,6 +14,7 @@ const wordInput = document.getElementById('word-input');
 const submitBtn = document.getElementById('submit-word');
 const messageEl = document.getElementById('message');
 const levelCompleteEl = document.getElementById('level-complete');
+const lettersUsedEl = document.getElementById('letters-used');
 
 document.getElementById('version').textContent = VERSION;
 document.getElementById('intro-version').textContent = VERSION;
@@ -38,6 +39,18 @@ const TOTAL_LEVELS = 7;
 function getUnlockedLevels() {
   return parseInt(localStorage.getItem('dandle_unlocked') || '1', 10);
 }
+function getBestScore(level) {
+  const v = localStorage.getItem('dandle_score_' + level);
+  return v === null ? null : parseInt(v, 10);
+}
+function saveBestScore(level, score) {
+  const prev = getBestScore(level);
+  if (prev === null || score < prev) {
+    localStorage.setItem('dandle_score_' + level, String(score));
+    return true;
+  }
+  return false;
+}
 function unlockNextLevel(level) {
   const current = getUnlockedLevels();
   if (level >= current) {
@@ -59,7 +72,9 @@ function showLevelSelect() {
     if (isLocked) {
       btn.innerHTML = `<span class="lock-icon">&#128274;</span><span class="level-label">Locked</span>`;
     } else {
-      btn.innerHTML = `<span class="level-num">${i}</span><span class="level-label">${isCompleted ? '&#10003; Done' : 'Play'}</span>`;
+      const best = getBestScore(i);
+      const scoreHtml = best !== null ? `<span class="level-score">&#9650; ${best}</span>` : '';
+      btn.innerHTML = `<span class="level-num">${i}</span><span class="level-label">${isCompleted ? '&#10003; Done' : 'Play'}</span>${scoreHtml}`;
       btn.addEventListener('click', () => {
         currentLevel = i;
         levelSelectEl.classList.add('hidden');
@@ -2058,6 +2073,7 @@ function submitWord() {
   const wordIdx = words.length;
   placeWord(text, startGx, startGz, dir, wordIdx, true, startGy);
   lettersUsed += text.length;
+  lettersUsedEl.textContent = '\u25b2 ' + lettersUsed;
 
   // Apply bonus impulse if challenge was completed
   if (forceMultiplier > 1.0) {
@@ -2308,6 +2324,7 @@ function startLevel() {
   levelComplete = false;
   levelFalling = false;
   lettersUsed = 0;
+  lettersUsedEl.textContent = '\u25b2 0';
   currentDir = 'y+';
   levelCompleteEl.classList.add('hidden');
   inputContainer.classList.add('hidden');
@@ -2586,6 +2603,7 @@ function updatePhysics() {
         wp.z >= endZoneBox.minimum.z && wp.z <= endZoneBox.maximum.z) {
         levelComplete = true;
         unlockNextLevel(currentLevel);
+        saveBestScore(currentLevel, lettersUsed);
         const isLast = currentLevel >= TOTAL_LEVELS;
         levelCompleteEl.querySelector('h1').textContent = 'Level Complete!';
         levelCompleteEl.querySelector('p').textContent = isLast

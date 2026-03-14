@@ -1,7 +1,7 @@
 import { getRandomWord, isValidWord, getWordTypes, isVerb, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v5.9.9';
+const VERSION = 'v5.9.10';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -235,8 +235,6 @@ function makeLetterMaterial(letter, bgColor, borderColor, textColor) {
   const mat = new BABYLON.StandardMaterial('letterMat_' + letter + '_' + Math.random(), scene);
   const dataUrl = _makeCanvasTex(letter, bgColor, borderColor, textColor);
   const tex = new BABYLON.Texture(dataUrl, scene, false, true);
-  tex.vScale = -1;
-  tex.vOffset = 1;
   mat.diffuseTexture = tex;
   _matte(mat);
   return mat;
@@ -848,6 +846,9 @@ function addLetterZone(cx, cz, size, type, letter) {
   const dtCtx = dt.getContext();
   dtCtx.drawImage(c, 0, 0);
   dt.update(false);
+
+  dt.vScale = -1;
+  dt.vOffset = 1;
 
   const mat = new BABYLON.StandardMaterial('zoneMat_' + Math.random(), scene);
   mat.diffuseTexture = dt;

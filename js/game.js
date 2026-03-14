@@ -1,7 +1,7 @@
 import { getRandomWord, isValidWord, getWordTypes, isVerb, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v5.9.1';
+const VERSION = 'v5.9.2';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -2142,23 +2142,45 @@ const BUILTIN_LEVELS = [
     zipLines: [{ x1: 3, y1: 12, z1: 0, x2: 21, y2: 2, z2: 0, radius: 0.3 }],
   },
   { // Level 7
-    name: 'Level 7', hint: 'Ramps guide you — but the ice won\'t cooperate!',
+    name: 'Level 7', hint: 'Slide down the icy ramp — knock the pins flat!',
+    startY: 6,
     floor: {
       type: 'regions', regions: [
-        { xMin: -8, xMax: 16, zMin: -6, zMax: 6, y: 0 },
+        { xMin: -6, xMax: 3,  zMin: -4, zMax: 4, y: 6 }, // starting platform
+        { xMin: 9,  xMax: 26, zMin: -4, zMax: 4, y: 0 }, // bowling lane
       ]
     },
-    endZone: { x: 13, z: 0, width: 4, depth: 4 },
+    endZone: { x: 23, z: 0, width: 4, depth: 6 },
+    // Descending ramp: 6 steps from y=5 down to y=0, 5 blocks wide in Z
     ramps: [
-      { x: 3, y: 0, z:  3, slope: '1:1', direction: '-z' },
-      { x: 3, y: 0, z: -3, slope: '1:1', direction: '+z' },
-      { x: 4, y: 0, z:  3, slope: '1:1', direction: '-z' },
-      { x: 4, y: 0, z: -3, slope: '1:1', direction: '+z' },
+      { x: 3, y: 5, z: -2, slope: '1:1', direction: '+x' }, { x: 3, y: 5, z: -1, slope: '1:1', direction: '+x' }, { x: 3, y: 5, z: 0, slope: '1:1', direction: '+x' }, { x: 3, y: 5, z: 1, slope: '1:1', direction: '+x' }, { x: 3, y: 5, z: 2, slope: '1:1', direction: '+x' },
+      { x: 4, y: 4, z: -2, slope: '1:1', direction: '+x' }, { x: 4, y: 4, z: -1, slope: '1:1', direction: '+x' }, { x: 4, y: 4, z: 0, slope: '1:1', direction: '+x' }, { x: 4, y: 4, z: 1, slope: '1:1', direction: '+x' }, { x: 4, y: 4, z: 2, slope: '1:1', direction: '+x' },
+      { x: 5, y: 3, z: -2, slope: '1:1', direction: '+x' }, { x: 5, y: 3, z: -1, slope: '1:1', direction: '+x' }, { x: 5, y: 3, z: 0, slope: '1:1', direction: '+x' }, { x: 5, y: 3, z: 1, slope: '1:1', direction: '+x' }, { x: 5, y: 3, z: 2, slope: '1:1', direction: '+x' },
+      { x: 6, y: 2, z: -2, slope: '1:1', direction: '+x' }, { x: 6, y: 2, z: -1, slope: '1:1', direction: '+x' }, { x: 6, y: 2, z: 0, slope: '1:1', direction: '+x' }, { x: 6, y: 2, z: 1, slope: '1:1', direction: '+x' }, { x: 6, y: 2, z: 2, slope: '1:1', direction: '+x' },
+      { x: 7, y: 1, z: -2, slope: '1:1', direction: '+x' }, { x: 7, y: 1, z: -1, slope: '1:1', direction: '+x' }, { x: 7, y: 1, z: 0, slope: '1:1', direction: '+x' }, { x: 7, y: 1, z: 1, slope: '1:1', direction: '+x' }, { x: 7, y: 1, z: 2, slope: '1:1', direction: '+x' },
+      { x: 8, y: 0, z: -2, slope: '1:1', direction: '+x' }, { x: 8, y: 0, z: -1, slope: '1:1', direction: '+x' }, { x: 8, y: 0, z: 0, slope: '1:1', direction: '+x' }, { x: 8, y: 0, z: 1, slope: '1:1', direction: '+x' }, { x: 8, y: 0, z: 2, slope: '1:1', direction: '+x' },
     ],
+    // Ice covering the lane
     iceBlocks: [
-      { x: 5, y: 0, z: -2 }, { x: 5, y: 0, z: -1 }, { x: 5, y: 0, z: 0 }, { x: 5, y: 0, z: 1 }, { x: 5, y: 0, z: 2 },
-      { x: 6, y: 0, z: -2 }, { x: 6, y: 0, z: -1 }, { x: 6, y: 0, z: 0 }, { x: 6, y: 0, z: 1 }, { x: 6, y: 0, z: 2 },
-      { x: 7, y: 0, z: -2 }, { x: 7, y: 0, z: -1 }, { x: 7, y: 0, z: 0 }, { x: 7, y: 0, z: 1 }, { x: 7, y: 0, z: 2 },
+      { x:  9, y: 0, z: -2 }, { x:  9, y: 0, z: -1 }, { x:  9, y: 0, z: 0 }, { x:  9, y: 0, z: 1 }, { x:  9, y: 0, z: 2 },
+      { x: 10, y: 0, z: -2 }, { x: 10, y: 0, z: -1 }, { x: 10, y: 0, z: 0 }, { x: 10, y: 0, z: 1 }, { x: 10, y: 0, z: 2 },
+      { x: 11, y: 0, z: -2 }, { x: 11, y: 0, z: -1 }, { x: 11, y: 0, z: 0 }, { x: 11, y: 0, z: 1 }, { x: 11, y: 0, z: 2 },
+      { x: 12, y: 0, z: -2 }, { x: 12, y: 0, z: -1 }, { x: 12, y: 0, z: 0 }, { x: 12, y: 0, z: 1 }, { x: 12, y: 0, z: 2 },
+      { x: 13, y: 0, z: -2 }, { x: 13, y: 0, z: -1 }, { x: 13, y: 0, z: 0 }, { x: 13, y: 0, z: 1 }, { x: 13, y: 0, z: 2 },
+      { x: 14, y: 0, z: -2 }, { x: 14, y: 0, z: -1 }, { x: 14, y: 0, z: 0 }, { x: 14, y: 0, z: 1 }, { x: 14, y: 0, z: 2 },
+      { x: 15, y: 0, z: -2 }, { x: 15, y: 0, z: -1 }, { x: 15, y: 0, z: 0 }, { x: 15, y: 0, z: 1 }, { x: 15, y: 0, z: 2 },
+    ],
+    // Pins: 6-pin triangle, stacked 3 high (tall pins)
+    destructibleBlocks: [
+      // Front pin
+      { x: 17, y: 0, z:  0 }, { x: 17, y: 1, z:  0 }, { x: 17, y: 2, z:  0 },
+      // Second row
+      { x: 18, y: 0, z: -1 }, { x: 18, y: 1, z: -1 }, { x: 18, y: 2, z: -1 },
+      { x: 18, y: 0, z:  1 }, { x: 18, y: 1, z:  1 }, { x: 18, y: 2, z:  1 },
+      // Back row
+      { x: 19, y: 0, z: -2 }, { x: 19, y: 1, z: -2 }, { x: 19, y: 2, z: -2 },
+      { x: 19, y: 0, z:  0 }, { x: 19, y: 1, z:  0 }, { x: 19, y: 2, z:  0 },
+      { x: 19, y: 0, z:  2 }, { x: 19, y: 1, z:  2 }, { x: 19, y: 2, z:  2 },
     ],
   },
 ];

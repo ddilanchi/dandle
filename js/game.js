@@ -1,7 +1,7 @@
 import { getRandomWord, isValidWord, getWordTypes, isVerb, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v5.8.0';
+const VERSION = 'v5.9.0';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -33,7 +33,7 @@ function loadSettings() {
 function saveSettings(s) { localStorage.setItem('dandle_settings', JSON.stringify(s)); }
 let currentSettings = loadSettings();
 
-const TOTAL_LEVELS = 6;
+const TOTAL_LEVELS = 7;
 
 function getUnlockedLevels() {
   return parseInt(localStorage.getItem('dandle_unlocked') || '1', 10);
@@ -2140,6 +2140,26 @@ const BUILTIN_LEVELS = [
     startY: 10,
     endZone: { x: 25, z: 0, width: 4, depth: 4 },
     zipLines: [{ x1: 3, y1: 12, z1: 0, x2: 21, y2: 2, z2: 0, radius: 0.3 }],
+  },
+  { // Level 7
+    name: 'Level 7', hint: 'Ramps guide you — but the ice won\'t cooperate!',
+    floor: {
+      type: 'regions', regions: [
+        { xMin: -8, xMax: 16, zMin: -6, zMax: 6, y: 0 },
+      ]
+    },
+    endZone: { x: 13, z: 0, width: 4, depth: 4 },
+    ramps: [
+      { x: 3, y: 0, z:  3, slope: '1:1', direction: '-z' },
+      { x: 3, y: 0, z: -3, slope: '1:1', direction: '+z' },
+      { x: 4, y: 0, z:  3, slope: '1:1', direction: '-z' },
+      { x: 4, y: 0, z: -3, slope: '1:1', direction: '+z' },
+    ],
+    iceBlocks: [
+      { x: 5, y: 0, z: -2 }, { x: 5, y: 0, z: -1 }, { x: 5, y: 0, z: 0 }, { x: 5, y: 0, z: 1 }, { x: 5, y: 0, z: 2 },
+      { x: 6, y: 0, z: -2 }, { x: 6, y: 0, z: -1 }, { x: 6, y: 0, z: 0 }, { x: 6, y: 0, z: 1 }, { x: 6, y: 0, z: 2 },
+      { x: 7, y: 0, z: -2 }, { x: 7, y: 0, z: -1 }, { x: 7, y: 0, z: 0 }, { x: 7, y: 0, z: 1 }, { x: 7, y: 0, z: 2 },
+    ],
   },
 ];
 

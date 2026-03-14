@@ -1,7 +1,7 @@
 import { getRandomWord, isValidWord, getWordTypes, isVerb, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v5.9.3';
+const VERSION = 'v5.9.4';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -937,7 +937,10 @@ function addRamp(x, y, z, slope, direction) {
   vd.applyToMesh(mesh);
 
   const mat = _matte(new BABYLON.StandardMaterial('rampMat', scene));
-  mat.diffuseColor = new BABYLON.Color3(0.55, 0.55, 0.45);
+  const isGreen = (Math.round(x) + Math.round(z)) % 2 === 0;
+  mat.diffuseColor = isGreen
+    ? new BABYLON.Color3(0.416, 0.678, 0.478)
+    : new BABYLON.Color3(0.925, 0.878, 0.753);
   mesh.material = mat;
   mesh.position.set(x + 0.5, y + sH / 2, z + 0.5);
   mesh.rotation.y = rotY;
@@ -2163,46 +2166,23 @@ const BUILTIN_LEVELS = [
     zipLines: [{ x1: 3, y1: 12, z1: 0, x2: 21, y2: 2, z2: 0, radius: 0.3 }],
   },
   { // Level 7
-    name: 'Level 7', hint: 'Slide down the icy ramp — knock the pins flat!',
-    startY: 6,
+    name: 'Level 7', hint: 'Slide down to the red zone!',
+    startY: 8,
     floor: {
       type: 'regions', regions: [
-        { xMin: -6, xMax: 3,  zMin: -4, zMax: 4, y: 6 }, // starting platform
-        { xMin: 9,  xMax: 26, zMin: -4, zMax: 4, y: 0 }, // bowling lane
+        { xMin: -6, xMax:  3, zMin: -4, zMax: 4, y: 8 }, // starting platform
+        { xMin: 19, xMax: 33, zMin: -4, zMax: 4, y: 0 }, // ice lane + end zone
       ]
     },
-    endZone: { x: 23, z: 0, width: 4, depth: 6 },
-    // Descending ramp: 6 steps from y=5 down to y=0, 5 blocks wide in Z
-    ramps: [
-      { x: 3, y: 5, z: -2, slope: '1:1', direction: '+x' }, { x: 3, y: 5, z: -1, slope: '1:1', direction: '+x' }, { x: 3, y: 5, z: 0, slope: '1:1', direction: '+x' }, { x: 3, y: 5, z: 1, slope: '1:1', direction: '+x' }, { x: 3, y: 5, z: 2, slope: '1:1', direction: '+x' },
-      { x: 4, y: 4, z: -2, slope: '1:1', direction: '+x' }, { x: 4, y: 4, z: -1, slope: '1:1', direction: '+x' }, { x: 4, y: 4, z: 0, slope: '1:1', direction: '+x' }, { x: 4, y: 4, z: 1, slope: '1:1', direction: '+x' }, { x: 4, y: 4, z: 2, slope: '1:1', direction: '+x' },
-      { x: 5, y: 3, z: -2, slope: '1:1', direction: '+x' }, { x: 5, y: 3, z: -1, slope: '1:1', direction: '+x' }, { x: 5, y: 3, z: 0, slope: '1:1', direction: '+x' }, { x: 5, y: 3, z: 1, slope: '1:1', direction: '+x' }, { x: 5, y: 3, z: 2, slope: '1:1', direction: '+x' },
-      { x: 6, y: 2, z: -2, slope: '1:1', direction: '+x' }, { x: 6, y: 2, z: -1, slope: '1:1', direction: '+x' }, { x: 6, y: 2, z: 0, slope: '1:1', direction: '+x' }, { x: 6, y: 2, z: 1, slope: '1:1', direction: '+x' }, { x: 6, y: 2, z: 2, slope: '1:1', direction: '+x' },
-      { x: 7, y: 1, z: -2, slope: '1:1', direction: '+x' }, { x: 7, y: 1, z: -1, slope: '1:1', direction: '+x' }, { x: 7, y: 1, z: 0, slope: '1:1', direction: '+x' }, { x: 7, y: 1, z: 1, slope: '1:1', direction: '+x' }, { x: 7, y: 1, z: 2, slope: '1:1', direction: '+x' },
-      { x: 8, y: 0, z: -2, slope: '1:1', direction: '+x' }, { x: 8, y: 0, z: -1, slope: '1:1', direction: '+x' }, { x: 8, y: 0, z: 0, slope: '1:1', direction: '+x' }, { x: 8, y: 0, z: 1, slope: '1:1', direction: '+x' }, { x: 8, y: 0, z: 2, slope: '1:1', direction: '+x' },
-    ],
-    // Ice covering the lane
-    iceBlocks: [
-      { x:  9, y: 0, z: -2 }, { x:  9, y: 0, z: -1 }, { x:  9, y: 0, z: 0 }, { x:  9, y: 0, z: 1 }, { x:  9, y: 0, z: 2 },
-      { x: 10, y: 0, z: -2 }, { x: 10, y: 0, z: -1 }, { x: 10, y: 0, z: 0 }, { x: 10, y: 0, z: 1 }, { x: 10, y: 0, z: 2 },
-      { x: 11, y: 0, z: -2 }, { x: 11, y: 0, z: -1 }, { x: 11, y: 0, z: 0 }, { x: 11, y: 0, z: 1 }, { x: 11, y: 0, z: 2 },
-      { x: 12, y: 0, z: -2 }, { x: 12, y: 0, z: -1 }, { x: 12, y: 0, z: 0 }, { x: 12, y: 0, z: 1 }, { x: 12, y: 0, z: 2 },
-      { x: 13, y: 0, z: -2 }, { x: 13, y: 0, z: -1 }, { x: 13, y: 0, z: 0 }, { x: 13, y: 0, z: 1 }, { x: 13, y: 0, z: 2 },
-      { x: 14, y: 0, z: -2 }, { x: 14, y: 0, z: -1 }, { x: 14, y: 0, z: 0 }, { x: 14, y: 0, z: 1 }, { x: 14, y: 0, z: 2 },
-      { x: 15, y: 0, z: -2 }, { x: 15, y: 0, z: -1 }, { x: 15, y: 0, z: 0 }, { x: 15, y: 0, z: 1 }, { x: 15, y: 0, z: 2 },
-    ],
-    // Pins: 6-pin triangle, stacked 3 high (tall pins)
-    destructibleBlocks: [
-      // Front pin
-      { x: 17, y: 0, z:  0 }, { x: 17, y: 1, z:  0 }, { x: 17, y: 2, z:  0 },
-      // Second row
-      { x: 18, y: 0, z: -1 }, { x: 18, y: 1, z: -1 }, { x: 18, y: 2, z: -1 },
-      { x: 18, y: 0, z:  1 }, { x: 18, y: 1, z:  1 }, { x: 18, y: 2, z:  1 },
-      // Back row
-      { x: 19, y: 0, z: -2 }, { x: 19, y: 1, z: -2 }, { x: 19, y: 2, z: -2 },
-      { x: 19, y: 0, z:  0 }, { x: 19, y: 1, z:  0 }, { x: 19, y: 2, z:  0 },
-      { x: 19, y: 0, z:  2 }, { x: 19, y: 1, z:  2 }, { x: 19, y: 2, z:  2 },
-    ],
+    endZone: { x: 30, z: 0, width: 4, depth: 6 },
+    // 16-step gradual ramp (2:1 slope, descends 0.5/step), 5 blocks wide
+    ramps: Array.from({ length: 16 }, (_, i) =>
+      [-2, -1, 0, 1, 2].map(dz => ({ x: 3 + i, y: 7.5 - i * 0.5, z: dz, slope: '2:1', direction: '+x' }))
+    ).flat(),
+    // Ice covering the lane right up to the end zone
+    iceBlocks: Array.from({ length: 10 }, (_, i) =>
+      [-2, -1, 0, 1, 2].map(dz => ({ x: 19 + i, y: 0, z: dz }))
+    ).flat(),
   },
 ];
 

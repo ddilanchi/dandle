@@ -6,7 +6,8 @@ const scene = new BABYLON.Scene(engine);
 scene.clearColor = new BABYLON.Color4(0.1, 0.1, 0.18, 1);
 
 // ── Camera ──
-// Right-drag: orbit | Middle-drag: pan | Scroll: zoom | Left-click: tool
+// Select mode: left-drag=orbit | Paint modes: right-drag=orbit
+// Two-finger scroll: zoom | Two-finger horizontal swipe: pan
 const camera = new BABYLON.ArcRotateCamera('cam', -Math.PI / 4, Math.PI / 3, 30,
   new BABYLON.Vector3(0, 0, 0), scene);
 camera.attachControl(canvas, true);
@@ -16,8 +17,17 @@ camera.upperBetaLimit = Math.PI / 2 - 0.02;
 camera.wheelDeltaPercentage = 0.02;
 camera.panningSensibility = 30;
 camera.minZ = 0.1;
-// buttons[0]=orbit, buttons[1]=zoom(unused), buttons[2]=pan
-camera.inputs.attached.pointers.buttons = [2, -1, 1];
+// Default: select mode — left-drag orbits
+camera.inputs.attached.pointers.buttons = [0, -1, -1];
+
+// Two-finger horizontal swipe (trackpad) → pan camera
+canvas.addEventListener('wheel', (e) => {
+  if (Math.abs(e.deltaX) > 1) {
+    const d = e.deltaX * 0.03;
+    camera.target.x += d * Math.sin(camera.alpha);
+    camera.target.z -= d * Math.cos(camera.alpha);
+  }
+}, { passive: true });
 
 // ── Lights ──
 const hemi = new BABYLON.HemisphericLight('hemi', new BABYLON.Vector3(0, 1, 0), scene);
@@ -533,6 +543,9 @@ function setTool(t) {
   tool = t;
   ziplineFirstClick = null;
   cursorMesh.setEnabled(false);
+  // Select mode: left-drag orbits (safe — select never drag-paints)
+  // Paint/erase modes: right-drag orbits so left-drag can paint
+  camera.inputs.attached.pointers.buttons = t === 'select' ? [0, -1, -1] : [2, -1, 1];
   document.querySelectorAll('.tool-btn').forEach(b => b.classList.toggle('active', b.dataset.tool === t));
 }
 document.querySelectorAll('.tool-btn').forEach(btn => {

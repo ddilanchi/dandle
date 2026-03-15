@@ -1,7 +1,7 @@
 import { getRandomWord, isValidWord, getWordTypes, isVerb, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v5.9.13';
+const VERSION = 'v5.9.14';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -34,7 +34,7 @@ function loadSettings() {
 function saveSettings(s) { localStorage.setItem('dandle_settings', JSON.stringify(s)); }
 let currentSettings = loadSettings();
 
-const TOTAL_LEVELS = 9;
+const TOTAL_LEVELS = 10;
 
 function getUnlockedLevels() {
   return parseInt(localStorage.getItem('dandle_unlocked') || '1', 10);
@@ -193,6 +193,7 @@ const debrisPieces = [];
 const floorMeshes = [];
 const floorAggregates = [];
 const movingPlatforms = [];
+const spinningPlatforms = [];
 const impulseBlocks = [];
 const spawnerTimers = [];
 
@@ -1190,6 +1191,39 @@ function spawnPhysicsObject(spawner) {
 }
 
 // ── Update functions for new block types ──
+function addSpinningPlatform(cx, y, cz, w, d, speed) {
+  const mesh = BABYLON.MeshBuilder.CreateBox('spinPlat', { width: w, height: 1, depth: d }, scene);
+  const mat = _matte(new BABYLON.StandardMaterial('spinMat', scene));
+  mat.diffuseColor = new BABYLON.Color3(0.75, 0.38, 0.1);
+  mat.emissiveColor = new BABYLON.Color3(0.12, 0.05, 0);
+  mesh.material = mat;
+  mesh.position.set(cx, y + 0.5, cz);
+  if (shadowGen) { shadowGen.addShadowCaster(mesh); mesh.receiveShadows = true; }
+  mesh.isPickable = false;
+  levelObstacles.push(mesh);
+
+  const agg = new BABYLON.PhysicsAggregate(mesh, BABYLON.PhysicsShapeType.BOX, {
+    mass: 0, friction: STATIC_FRICTION, restitution: 0.02
+  }, scene);
+  setCollisionFiltering(agg, CG_GROUND, CG_STRUCTURE | CG_FLYING | CG_DEBRIS);
+  agg.body.setMotionType(BABYLON.PhysicsMotionType.ANIMATED);
+
+  spinningPlatforms.push({ mesh, agg, cx, cy: y + 0.5, cz, angle: 0, speed: speed || 0.5 });
+}
+
+function updateSpinningPlatforms(dt) {
+  for (const sp of spinningPlatforms) {
+    sp.angle += dt * sp.speed;
+    const pos = new BABYLON.Vector3(sp.cx, sp.cy, sp.cz);
+    const quat = BABYLON.Quaternion.RotationAxis(BABYLON.Vector3.Up(), sp.angle);
+    sp.mesh.rotationQuaternion = quat;
+    sp.mesh.position.copyFrom(pos);
+    if (sp.agg && sp.agg.body) {
+      sp.agg.body.setTargetTransform(pos, quat);
+    }
+  }
+}
+
 function updateMovingPlatforms(dt) {
   for (const mp of movingPlatforms) {
     mp.phase += dt * mp.speed;
@@ -2254,9 +2288,21 @@ const BUILTIN_LEVELS = [
   },
   { // Level 9
     name: 'Level 9', hint: 'Verbs only! Every word must be an action — push, run, fling, jump!',
+
     floor: { type: 'default' },
     endZone: { x: 10, z: 0, width: 4, depth: 4 },
     verbOnly: true,
+  },
+  { // Level 10
+    name: 'Level 10', hint: 'The platform is spinning — build fast before you\'re flung off!',
+    startY: 1,
+    floor: {
+      type: 'regions', regions: [
+        { xMin: 13, xMax: 24, zMin: -5, zMax: 5, y: 0 }, // landing pad next to platform
+      ]
+    },
+    spinningPlatform: { cx: 0, y: 0, cz: 0, width: 10, depth: 10, speed: 0.45 },
+    endZone: { x: 18, z: 0, width: 6, depth: 8, elevation: 0 },
   },
 ];
 
@@ -2333,6 +2379,10 @@ function loadLevelFromConfig(config) {
 
   // Moving blocks
   for (const b of (config.movingBlocks || [])) addMovingBlock(b.x, b.y, b.z, b.direction || '+x', b.distance || 5, b.speed || 2);
+  if (config.spinningPlatform) {
+    const sp = config.spinningPlatform;
+    addSpinningPlatform(sp.cx ?? 0, sp.y ?? 0, sp.cz ?? 0, sp.width ?? 8, sp.depth ?? 8, sp.speed ?? 0.5);
+  }
 
   // Destructible blocks
   for (const b of (config.destructibleBlocks || [])) addDestructibleBlock(b.x, b.y, b.z);
@@ -2379,6 +2429,7 @@ function startLevel() {
   levelObstacles.length = 0;
   letterZones.length = 0;
   movingPlatforms.length = 0;
+  spinningPlatforms.length = 0;
   impulseBlocks.length = 0;
   powerUps.length = 0;
   activeChallenge = null;
@@ -2776,6 +2827,7 @@ scene.registerBeforeRender(() => {
   updateLetterZones();
   updateDirectionArrow();
   updateMovingPlatforms(dt);
+  updateSpinningPlatforms(dt);
   updateImpulseBlocks();
   updateSpawners(time);
   updatePowerUps(time);

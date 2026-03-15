@@ -1,7 +1,7 @@
 import { getRandomWord, isValidWord, getWordTypes, isVerb, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v5.9.11';
+const VERSION = 'v5.9.12';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -34,7 +34,7 @@ function loadSettings() {
 function saveSettings(s) { localStorage.setItem('dandle_settings', JSON.stringify(s)); }
 let currentSettings = loadSettings();
 
-const TOTAL_LEVELS = 7;
+const TOTAL_LEVELS = 8;
 
 function getUnlockedLevels() {
   return parseInt(localStorage.getItem('dandle_unlocked') || '1', 10);
@@ -182,6 +182,7 @@ const words = [];       // { text, dir, positions, _deleted }
 
 const FLYING_LETTER_SPEED = 8;
 let endZone = null;
+let endZoneBeacon = null;
 let endZoneBox = null;
 let directionArrow = null;
 let currentDir = 'y+';
@@ -711,22 +712,36 @@ function updateGhostPreview() {
 
 // ── End zone ──
 function createEndZone(x, z, w, d, y = 0) {
+  // Floor decal
   const mat = new BABYLON.StandardMaterial('endZoneMat', scene);
   mat.diffuseColor = new BABYLON.Color3(1, 0.15, 0.15);
   mat.emissiveColor = new BABYLON.Color3(1, 0.3, 0.2);
   mat.alpha = 0.7;
+  mat.backFaceCulling = false;
 
   endZone = BABYLON.MeshBuilder.CreateGround('endZone', { width: w, height: d }, scene);
-  endZone.position.set(x, y + 0.01, z);
+  endZone.position.set(x, y + 0.02, z);
   endZone.material = mat;
   endZone.isPickable = false;
+
+  // Tall beacon column — visible from anywhere on the level
+  const beaconH = 14;
+  const bMat = new BABYLON.StandardMaterial('beaconMat', scene);
+  bMat.diffuseColor = new BABYLON.Color3(1, 0.15, 0.15);
+  bMat.emissiveColor = new BABYLON.Color3(1, 0.25, 0.15);
+  bMat.alpha = 0.22;
+  bMat.backFaceCulling = false;
+  endZoneBeacon = BABYLON.MeshBuilder.CreateBox('beacon', { width: w * 0.6, height: beaconH, depth: d * 0.6 }, scene);
+  endZoneBeacon.position.set(x, y + beaconH / 2, z);
+  endZoneBeacon.material = bMat;
+  endZoneBeacon.isPickable = false;
 
   endZoneBox = new BABYLON.BoundingInfo(
     new BABYLON.Vector3(x - w / 2, y, z - d / 2),
     new BABYLON.Vector3(x + w / 2, y + 2, z + d / 2)
   );
 
-  // Support pillar if elevated
+  // Support pillar if elevated above ground
   if (y > 0) {
     const pillar = BABYLON.MeshBuilder.CreateBox('pillar', { width: w, height: y, depth: d }, scene);
     const pMat = new BABYLON.StandardMaterial('pillarMat', scene);
@@ -2147,23 +2162,23 @@ let lettersUsed = 0;
 // ── Built-in level configs ──
 const BUILTIN_LEVELS = [
   { // Level 1
-    name: 'Level 1', hint: 'Build words to push your structure into the red zone!',
+    name: 'Level 1', hint: 'Place words to push your block — get any cube into the red beacon!',
     floor: { type: 'default' },
     endZone: { x: 10, z: 0, width: 4, depth: 4 },
   },
   { // Level 2
-    name: 'Level 2', hint: 'A wall blocks the way. Find a path around it!',
+    name: 'Level 2', hint: 'A wall blocks the direct path — go around it or build over it!',
     floor: { type: 'default' },
     endZone: { x: 12, z: 0, width: 4, depth: 4 },
     walls: [{ x: 6, z: 0, width: 1, height: 3, depth: 10 }],
   },
   { // Level 3
-    name: 'Level 3', hint: 'The goal is in the air! Build upward momentum!',
+    name: 'Level 3', hint: 'The goal is elevated — build words upward to launch your block into it!',
     floor: { type: 'default' },
     endZone: { x: 10, z: 0, width: 4, depth: 4, elevation: 8 },
   },
   { // Level 4
-    name: 'Level 4', hint: 'Two islands! Bridge the gap or launch across!',
+    name: 'Level 4', hint: 'Two islands with a gap — build momentum to launch across to the far side!',
     floor: {
       type: 'regions', regions: [
         { xMin: -8, xMax: 5, zMin: -5, zMax: 5, y: 0 },
@@ -2173,7 +2188,7 @@ const BUILTIN_LEVELS = [
     endZone: { x: 14, z: 0, width: 4, depth: 4 },
   },
   { // Level 5
-    name: 'Level 5', hint: 'Letter zones! -X deletes words with X. +X deletes words WITHOUT X.',
+    name: 'Level 5', hint: 'Letter zones ahead! -L dissolves words CONTAINING L. +L dissolves words MISSING L. Reach the elevated goal!',
     floor: {
       type: 'regions', regions: [
         { xMin: -8, xMax: 22, zMin: -2, zMax: 2, y: 0 },
@@ -2189,7 +2204,7 @@ const BUILTIN_LEVELS = [
     ],
   },
   { // Level 6
-    name: 'Level 6', hint: 'Zip line! Build a hook to slide down the pole!',
+    name: 'Level 6', hint: 'You\'re on a high platform with a zip line — build words to push your block onto the line and ride it across!',
     floor: {
       type: 'regions', regions: [
         { xMin: -6, xMax: 4, zMin: -4, zMax: 4, y: 10 },
@@ -2201,25 +2216,39 @@ const BUILTIN_LEVELS = [
     zipLines: [{ x1: 3, y1: 12, z1: 0, x2: 21, y2: 2, z2: 0, radius: 0.3 }],
   },
   { // Level 7
-    name: 'Level 7', hint: 'Slide down, cross the gap, reach the red zone!',
+    name: 'Level 7', hint: 'No time to plan — you\'re already sliding! Build fast and launch across the gap!',
     startY: 8,
     floor: {
       type: 'regions', regions: [
-        { xMin: -6, xMax:  3, zMin: -4, zMax: 4, y:  8 }, // starting platform
-        { xMin: 21, xMax: 26, zMin: -4, zMax: 4, y: -2 }, // ice lane (top face at y=-1)
-        { xMin: 31, xMax: 36, zMin: -4, zMax: 4, y: -2 }, // end zone landing
+        { xMin: -4, xMax: 1, zMin: -2, zMax: 2, y: 8 },   // small starting platform
+        { xMin: 22, xMax: 27, zMin: -2, zMax: 2, y: -2 }, // short ice lane
+        { xMin: 36, xMax: 42, zMin: -2, zMax: 2, y: -2 }, // landing platform
       ]
     },
-    endZone: { x: 33, z: 0, width: 4, depth: 6, elevation: -1 },
-    // 18-step icy ramp descending from y=7.5 to y=-1, 5 blocks wide
-    ramps: Array.from({ length: 18 }, (_, i) =>
-      [-2, -1, 0, 1, 2].map(dz => ({ x: 3 + i, y: 7.5 - i * 0.5, z: dz, slope: '2:1', direction: '+x', icy: true }))
-    ).flat(),
-    // Ice lane (y=-2, top face at y=-1): 5 blocks leading to the gap
+    endZone: { x: 39, z: 0, width: 4, depth: 4, elevation: -1 },
+    ramps: [
+      // 2 non-icy entry ramps — gentle slope from the starting platform
+      ...[-1, 0, 1].map(dz => ({ x: 1, y: 8.5, z: dz, slope: '2:1', direction: '+x', icy: false })),
+      ...[-1, 0, 1].map(dz => ({ x: 2, y: 8.0, z: dz, slope: '2:1', direction: '+x', icy: false })),
+      // 18-step icy ramp descending from y=7.5 to y=-1
+      ...Array.from({ length: 18 }, (_, i) =>
+        [-1, 0, 1].map(dz => ({ x: 3 + i, y: 7.5 - i * 0.5, z: dz, slope: '2:1', direction: '+x', icy: true }))
+      ).flat(),
+    ],
     iceBlocks: Array.from({ length: 5 }, (_, i) =>
-      [-2, -1, 0, 1, 2].map(dz => ({ x: 21 + i, y: -2, z: dz }))
+      [-1, 0, 1].map(dz => ({ x: 22 + i, y: -2, z: dz }))
     ).flat(),
-    // Gap: x=26..30 (5 blocks, no floor) — need momentum to cross!
+    // Gap: x=27..35 = 9 blocks wide
+  },
+  { // Level 8
+    name: 'Level 8', hint: 'The goal is directly below — build downward to reach it!',
+    startY: 10,
+    floor: {
+      type: 'regions', regions: [
+        { xMin: -5, xMax: 5, zMin: -5, zMax: 5, y: 10 }, // elevated starting platform only
+      ]
+    },
+    endZone: { x: 0, z: 0, width: 8, depth: 8, elevation: 0 },
   },
 ];
 
@@ -2333,6 +2362,7 @@ function startLevel() {
 
   // Remove end zone
   if (endZone) { endZone.dispose(); endZone = null; }
+  if (endZoneBeacon) { endZoneBeacon.dispose(); endZoneBeacon = null; }
   endZoneBox = null;
 
   // Remove obstacles
@@ -2619,10 +2649,16 @@ function updatePhysics() {
 }
 
 function animateEndZone(time) {
+  const pulse = Math.sin(time * 3);
   if (endZone && endZone.material) {
-    endZone.material.alpha = 0.55 + Math.sin(time * 3) * 0.2;
+    endZone.material.alpha = 0.55 + pulse * 0.2;
     endZone.material.emissiveColor.r = 1;
     endZone.material.emissiveColor.g = 0.2 + Math.sin(time * 2) * 0.1;
+  }
+  if (endZoneBeacon && endZoneBeacon.material) {
+    endZoneBeacon.material.alpha = 0.15 + pulse * 0.1;
+    endZoneBeacon.material.emissiveColor.r = 1;
+    endZoneBeacon.material.emissiveColor.g = 0.2 + pulse * 0.1;
   }
 }
 

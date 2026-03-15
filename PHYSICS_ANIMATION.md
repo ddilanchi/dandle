@@ -1,5 +1,44 @@
 # DANDLE Physics Reference
 
+---
+
+## ⚠️ LEVEL AUTHORING RULE — Build-Down Teleport Logic
+
+**Every level MUST support the lift/teleport logic in `_placeNextLetter`.**
+
+When the player builds downward (places a word below the current structure), the
+game predicts the new letter's world Y from its neighbor's actual `mesh.position`.
+If that predicted Y would place the cube underground (< 1), the entire structure is
+teleported upward by `Math.ceil(1 - predictedY)` units so it stays above the floor.
+
+**This is not optional per-level — it runs globally and must work on every level.**
+
+### Why it breaks on new levels
+
+The logic uses the neighbor cube's real `mesh.position.y` (world space), NOT the
+grid `gy` coordinate. On levels with elevated start positions (e.g. `startY: 8`)
+or ramps, the structure physically descends during gameplay. At that point:
+- `gy` (grid coord) may still be positive → old `if (l.gy < 0)` check would never fire
+- `mesh.position.y` is the truth → correctly detects underground placement
+
+If you ever see "build down gets stuck instead of pushing up," it means the predicted
+world Y is wrong — check that the neighbor lookup (the `dx+dy+dz === 1` scan) is
+finding the right adjacent cube and that `mesh.position.y` reflects the cube's true
+current position.
+
+### The `disablePreStep` reset
+
+After teleporting, each cube does:
+```js
+body.disablePreStep = false;  // mesh drives physics body this frame (kinematic-like)
+setTimeout(() => { body.disablePreStep = true; }, 50);  // restore dynamic after 50ms
+```
+**Without the setTimeout reset, the body becomes permanently kinematic and freezes.**
+This was a separate bug (v5.9.6 → v5.9.7). If structure ever stops responding to
+physics after a teleport, check that `disablePreStep` is being reset to `true`.
+
+---
+
 ## What We've Been Doing Wrong
 
 Our fundamental mistake has been **destroying and recreating the entire compound body

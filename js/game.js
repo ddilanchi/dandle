@@ -1,7 +1,7 @@
 import { getRandomWord, isValidWord, getWordTypes, isVerb, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v5.9.10';
+const VERSION = 'v5.9.11';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -109,9 +109,9 @@ camera.inputs.attached.pointers.buttons = [0];
 // Lights
 const ambient = new BABYLON.HemisphericLight('ambient', new BABYLON.Vector3(0, 1, 0), scene);
 ambient.intensity = 0.7;
-const sun = new BABYLON.DirectionalLight('sun', new BABYLON.Vector3(-0.5, -1, -0.3), scene);
+const sun = new BABYLON.DirectionalLight('sun', new BABYLON.Vector3(-0.4, -1, 0.6), scene);
 sun.intensity = 1.2;
-sun.position = new BABYLON.Vector3(8, 15, 10);
+sun.position = new BABYLON.Vector3(12, 20, -15);
 
 // Shadows
 let shadowGen = null;

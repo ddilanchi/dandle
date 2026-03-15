@@ -1,7 +1,7 @@
 import { getRandomWord, isValidWord, getWordTypes, isVerb, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v5.9.12';
+const VERSION = 'v5.9.13';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -34,7 +34,7 @@ function loadSettings() {
 function saveSettings(s) { localStorage.setItem('dandle_settings', JSON.stringify(s)); }
 let currentSettings = loadSettings();
 
-const TOTAL_LEVELS = 8;
+const TOTAL_LEVELS = 9;
 
 function getUnlockedLevels() {
   return parseInt(localStorage.getItem('dandle_unlocked') || '1', 10);
@@ -2031,6 +2031,7 @@ function submitWord() {
   if (text.length < 2) { showMessage('Word must be at least 2 letters'); audio.error(); return; }
   if (!/^[A-Z]+$/.test(text)) { showMessage('Letters only!'); audio.error(); return; }
   if (!isValidWord(text)) { showMessage(`"${text}" is not a real word`); audio.error(); return; }
+  if (_activeConfig?.verbOnly && !isVerb(text)) { showMessage(`"${text}" is not a verb — verbs only this level!`); audio.error(); return; }
 
   const letter = selectedCube.letter;
   const allIdx = [];
@@ -2213,7 +2214,7 @@ const BUILTIN_LEVELS = [
     },
     startY: 10,
     endZone: { x: 25, z: 0, width: 4, depth: 4 },
-    zipLines: [{ x1: 3, y1: 12, z1: 0, x2: 21, y2: 2, z2: 0, radius: 0.3 }],
+    zipLines: [{ x1: 3, y1: 15, z1: 0, x2: 21, y2: 5, z2: 0, radius: 0.3 }],
   },
   { // Level 7
     name: 'Level 7', hint: 'No time to plan — you\'re already sliding! Build fast and launch across the gap!',
@@ -2242,6 +2243,7 @@ const BUILTIN_LEVELS = [
   },
   { // Level 8
     name: 'Level 8', hint: 'The goal is directly below — build downward to reach it!',
+
     startY: 10,
     floor: {
       type: 'regions', regions: [
@@ -2250,9 +2252,16 @@ const BUILTIN_LEVELS = [
     },
     endZone: { x: 0, z: 0, width: 8, depth: 8, elevation: 0 },
   },
+  { // Level 9
+    name: 'Level 9', hint: 'Verbs only! Every word must be an action — push, run, fling, jump!',
+    floor: { type: 'default' },
+    endZone: { x: 10, z: 0, width: 4, depth: 4 },
+    verbOnly: true,
+  },
 ];
 
 let _customLevelConfig = null;
+let _activeConfig = null;
 
 function loadLevelFromConfig(config) {
   // Floor
@@ -2400,6 +2409,7 @@ function startLevel() {
   // Build floor
   // Load level config (builtin or custom)
   const config = _customLevelConfig || BUILTIN_LEVELS[currentLevel - 1] || BUILTIN_LEVELS[0];
+  _activeConfig = config;
   loadLevelFromConfig(config);
 
   levelInfoEl.textContent = _customLevelConfig ? (config.name || 'Custom Level') : `Level ${currentLevel}`;

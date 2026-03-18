@@ -1,7 +1,7 @@
 import { getRandomWord, isValidWord, getWordTypes, isVerb, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v5.9.15';
+const VERSION = 'v5.9.16';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -2277,10 +2277,10 @@ const BUILTIN_LEVELS = [
   },
   { // Level 7
     name: 'Level 7', hint: 'No time to plan — you\'re already sliding! Build fast and launch across the gap!',
-    startY: 8,
+    startY: 9,
     floor: {
       type: 'regions', regions: [
-        { xMin: -4, xMax: 1, zMin: -2, zMax: 2, y: 8 },   // small starting platform
+        { xMin: -4, xMax: 1, zMin: -2, zMax: 2, y: 9 },   // small starting platform
         { xMin: 22, xMax: 27, zMin: -2, zMax: 2, y: -2 }, // short ice lane
         { xMin: 36, xMax: 42, zMin: -2, zMax: 2, y: -2 }, // landing platform
       ]
@@ -2288,11 +2288,11 @@ const BUILTIN_LEVELS = [
     endZone: { x: 39, z: 0, width: 4, depth: 4, elevation: -1 },
     ramps: [
       // 2 non-icy entry ramps — gentle slope from the starting platform
-      ...[-1, 0, 1].map(dz => ({ x: 1, y: 8.5, z: dz, slope: '2:1', direction: '+x', icy: false })),
-      ...[-1, 0, 1].map(dz => ({ x: 2, y: 8.0, z: dz, slope: '2:1', direction: '+x', icy: false })),
-      // 18-step icy ramp descending from y=7.5 to y=-1
+      ...[-1, 0, 1].map(dz => ({ x: 1, y: 9.5, z: dz, slope: '2:1', direction: '+x', icy: false })),
+      ...[-1, 0, 1].map(dz => ({ x: 2, y: 9.0, z: dz, slope: '2:1', direction: '+x', icy: false })),
+      // 18-step icy ramp descending from y=8.5 to y=0
       ...Array.from({ length: 18 }, (_, i) =>
-        [-1, 0, 1].map(dz => ({ x: 3 + i, y: 7.5 - i * 0.5, z: dz, slope: '2:1', direction: '+x', icy: true }))
+        [-1, 0, 1].map(dz => ({ x: 3 + i, y: 8.5 - i * 0.5, z: dz, slope: '2:1', direction: '+x', icy: true }))
       ).flat(),
     ],
     iceBlocks: Array.from({ length: 5 }, (_, i) =>

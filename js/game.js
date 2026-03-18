@@ -1,7 +1,7 @@
 import { getRandomWord, isValidWord, getWordTypes, isVerb, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v5.9.14';
+const VERSION = 'v5.9.15';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -77,12 +77,37 @@ function showLevelSelect() {
       btn.innerHTML = `<span class="level-num">${i}</span><span class="level-label">${isCompleted ? '&#10003; Done' : 'Play'}</span>${scoreHtml}`;
       btn.addEventListener('click', () => {
         currentLevel = i;
+        _customLevelConfig = null;
         levelSelectEl.classList.add('hidden');
         startLevel();
       });
     }
     levelGridEl.appendChild(btn);
   }
+
+  // Custom level tile
+  const savedCustom = localStorage.getItem('dandle_custom_level');
+  if (savedCustom) {
+    try {
+      const customConfig = JSON.parse(savedCustom);
+      const cBtn = document.createElement('button');
+      cBtn.className = 'level-btn custom-level';
+      const name = (customConfig.name || 'Custom').slice(0, 10);
+      cBtn.innerHTML = `<span class="level-num">&#9998;</span><span class="level-label">${name}</span><span class="clear-custom" title="Remove">&#10005;</span>`;
+      cBtn.addEventListener('click', (e) => {
+        if (e.target.classList.contains('clear-custom')) {
+          localStorage.removeItem('dandle_custom_level');
+          showLevelSelect();
+          return;
+        }
+        _customLevelConfig = customConfig;
+        levelSelectEl.classList.add('hidden');
+        startLevel();
+      });
+      levelGridEl.appendChild(cBtn);
+    } catch (e) { /* corrupt — ignore */ }
+  }
+
   levelSelectEl.classList.remove('hidden');
 }
 
@@ -2544,6 +2569,36 @@ restartBtn.addEventListener('click', () => { audio.stopMusic(); startLevel(); })
 document.getElementById('level-select-btn').addEventListener('click', () => {
   audio.stopMusic();
   showLevelSelect();
+});
+
+// ── Custom level import ──
+const importModal = document.getElementById('import-modal');
+const importJson  = document.getElementById('import-json');
+const importError = document.getElementById('import-error');
+
+document.getElementById('load-custom-btn').addEventListener('click', () => {
+  importJson.value = '';
+  importError.classList.add('hidden');
+  importModal.classList.remove('hidden');
+  setTimeout(() => importJson.focus(), 50);
+});
+
+document.getElementById('import-ok').addEventListener('click', () => {
+  const text = importJson.value.trim();
+  try {
+    const config = JSON.parse(text);
+    if (typeof config !== 'object' || Array.isArray(config)) throw new Error('not an object');
+    localStorage.setItem('dandle_custom_level', text);
+    importModal.classList.add('hidden');
+    showLevelSelect();
+  } catch (e) {
+    importError.textContent = 'Invalid JSON — check the format and try again.';
+    importError.classList.remove('hidden');
+  }
+});
+
+document.getElementById('import-cancel').addEventListener('click', () => {
+  importModal.classList.add('hidden');
 });
 
 // ── Settings ──

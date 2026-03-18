@@ -5,7 +5,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Dandle</title>
-  <link rel="stylesheet" href="css/style.css?v=5.9.14">
+  <link rel="stylesheet" href="css/style.css?v=5.9.15">
   <script src="https://cdn.babylonjs.com/babylon.js"></script>
   <script src="https://cdn.babylonjs.com/havok/HavokPhysics_umd.js"></script>
 </head>
@@ -91,6 +91,19 @@
     <h2>SELECT LEVEL</h2>
     <div id="level-grid"></div>
     <p id="level-select-hint">Complete levels to unlock more</p>
+    <button id="load-custom-btn">&#8683; Load Custom Level</button>
+  </div>
+  <div id="import-modal" class="hidden">
+    <div id="import-modal-inner">
+      <h3>LOAD CUSTOM LEVEL</h3>
+      <p>Paste exported JSON from the level editor:</p>
+      <textarea id="import-json" placeholder='{"name": "My Level", "endZone": {...}, ...}' spellcheck="false"></textarea>
+      <p id="import-error" class="hidden"></p>
+      <div id="import-actions">
+        <button id="import-ok">LOAD</button>
+        <button id="import-cancel">CANCEL</button>
+      </div>
+    </div>
   </div>
   <div id="intro-screen">
     <div id="intro-inner">
@@ -156,7 +169,7 @@
       }
     });
   </script>
-  <script type="module" src="js/game.js?v=5.9.14"></script>
+  <script type="module" src="js/game.js?v=5.9.15"></script>
 </body>
 
 </html>

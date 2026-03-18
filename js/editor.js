@@ -1073,9 +1073,14 @@ for (let i = 0; i < BUILTIN_LEVELS.length; i++) {
 
 // ── Init ──
 try {
-  const wip = localStorage.getItem('dandle_editor_wip');
-  if (wip) importLevel(JSON.parse(wip));
-  else { addDefaultFloor(); rebuildStartIndicators(); }
+  const urlLevel = new URLSearchParams(window.location.search).get('level');
+  if (urlLevel && BUILTIN_LEVELS[parseInt(urlLevel) - 1]) {
+    importLevel(BUILTIN_LEVELS[parseInt(urlLevel) - 1]);
+  } else {
+    const wip = localStorage.getItem('dandle_editor_wip');
+    if (wip) importLevel(JSON.parse(wip));
+    else { addDefaultFloor(); rebuildStartIndicators(); }
+  }
 } catch (e) { addDefaultFloor(); rebuildStartIndicators(); }
 
 engine.runRenderLoop(() => {

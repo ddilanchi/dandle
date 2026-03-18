@@ -1,7 +1,7 @@
 import { getRandomWord, isValidWord, getWordTypes, isVerb, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v5.9.16';
+const VERSION = 'v5.9.17';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -2569,6 +2569,10 @@ restartBtn.addEventListener('click', () => { audio.stopMusic(); startLevel(); })
 document.getElementById('level-select-btn').addEventListener('click', () => {
   audio.stopMusic();
   showLevelSelect();
+});
+
+document.getElementById('edit-level-btn').addEventListener('click', () => {
+  window.open('editor.html?level=' + currentLevel, '_blank');
 });
 
 // ── Custom level import ──

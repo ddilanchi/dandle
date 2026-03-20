@@ -1060,7 +1060,46 @@ const BUILTIN_LEVELS = [
       { xMin: -6, xMax: 4, zMin: -4, zMax: 4, y: 10 },
       { xMin: 20, xMax: 30, zMin: -4, zMax: 4, y: 0 },
     ]}, startY: 10, endZone: { x: 25, z: 0, width: 4, depth: 4 },
-    zipLines: [{ x1: 3, y1: 12, z1: 0, x2: 21, y2: 2, z2: 0, radius: 0.3 }] },
+    zipLines: [{ x1: 3, y1: 15, z1: 0, x2: 21, y2: 5, z2: 0, radius: 0.3 }] },
+  { name: 'Level 7', hint: 'No time to plan — you\'re already sliding! Build fast and launch across the gap!',
+    startY: 9,
+    floor: { type: 'regions', regions: [
+      { xMin: -4, xMax: 1, zMin: -2, zMax: 2, y: 9 },
+      { xMin: 22, xMax: 27, zMin: -2, zMax: 2, y: -2 },
+      { xMin: 36, xMax: 42, zMin: -2, zMax: 2, y: -2 },
+    ]},
+    endZone: { x: 39, z: 0, width: 4, depth: 4, elevation: -1 },
+    ramps: [
+      ...[-1, 0, 1].map(dz => ({ x: 1, y: 9.5, z: dz, slope: '2:1', direction: '+x', icy: false })),
+      ...[-1, 0, 1].map(dz => ({ x: 2, y: 9.0, z: dz, slope: '2:1', direction: '+x', icy: false })),
+      ...Array.from({ length: 18 }, (_, i) =>
+        [-1, 0, 1].map(dz => ({ x: 3 + i, y: 8.5 - i * 0.5, z: dz, slope: '2:1', direction: '+x', icy: true }))
+      ).flat(),
+    ],
+    iceBlocks: Array.from({ length: 5 }, (_, i) =>
+      [-1, 0, 1].map(dz => ({ x: 22 + i, y: -2, z: dz }))
+    ).flat(),
+  },
+  { name: 'Level 8', hint: 'The goal is directly below — build downward to reach it!',
+    startY: 10,
+    floor: { type: 'regions', regions: [
+      { xMin: -5, xMax: 5, zMin: -5, zMax: 5, y: 10 },
+    ]},
+    endZone: { x: 0, z: 0, width: 8, depth: 8, elevation: 0 },
+  },
+  { name: 'Level 9', hint: 'Verbs only! Every word must be an action — push, run, fling, jump!',
+    floor: { type: 'default' },
+    endZone: { x: 10, z: 0, width: 4, depth: 4 },
+    verbOnly: true,
+  },
+  { name: 'Level 10', hint: 'The platform is spinning — build fast before you\'re flung off!',
+    startY: 1,
+    floor: { type: 'regions', regions: [
+      { xMin: 13, xMax: 24, zMin: -5, zMax: 5, y: 0 },
+    ]},
+    spinningPlatform: { cx: 0, y: 0, cz: 0, width: 10, depth: 10, speed: 0.45 },
+    endZone: { x: 18, z: 0, width: 6, depth: 8, elevation: 0 },
+  },
 ];
 
 const templateBtns = document.getElementById('template-btns');

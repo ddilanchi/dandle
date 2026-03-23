@@ -927,6 +927,35 @@ function importLevel(config) {
   rebuildZipLines();
   rebuildStartIndicators();
   updateHighlight(); updatePanel(); autoSave();
+  frameCameraToLevel(config);
+}
+
+// ── Camera framing ──
+function frameCameraToLevel(config) {
+  // Start construct center: x=0, z=0, y=startY+1
+  const sy = (config.startY || 0) + 1;
+  const startX = 0, startZ = 0;
+
+  // End zone center
+  let ezX = startX, ezY = sy, ezZ = startZ;
+  if (config.endZone) {
+    ezX = config.endZone.x;
+    ezZ = config.endZone.z;
+    ezY = (config.endZone.elevation || 0) + 1;
+  }
+
+  // Midpoint between start and end zone
+  const midX = (startX + ezX) / 2;
+  const midZ = (startZ + ezZ) / 2;
+  const midY = (sy + ezY) / 2;
+
+  // Distance between them determines how far back the camera pulls
+  const dx = ezX - startX, dz = ezZ - startZ, dy = ezY - sy;
+  const span = Math.sqrt(dx * dx + dz * dz + dy * dy);
+  const pullBack = Math.max(20, span * 0.9);
+
+  camera.position.set(midX, midY + pullBack * 0.5, midZ - pullBack * 0.7);
+  camera.setTarget(new BABYLON.Vector3(midX, midY, midZ));
 }
 
 // ── Undo / Redo ──

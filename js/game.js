@@ -1,7 +1,7 @@
 import { getRandomWord, isValidWord, getWordTypes, isVerb, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v5.9.17';
+const VERSION = 'v5.9.20';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -2223,22 +2223,26 @@ let lettersUsed = 0;
 const BUILTIN_LEVELS = [
   { // Level 1
     name: 'Level 1', hint: 'Place words to push your block — get any cube into the red beacon!',
+    startY: 1,
     floor: { type: 'default' },
     endZone: { x: 10, z: 0, width: 4, depth: 4 },
   },
   { // Level 2
     name: 'Level 2', hint: 'A wall blocks the direct path — go around it or build over it!',
+    startY: 1,
     floor: { type: 'default' },
     endZone: { x: 12, z: 0, width: 4, depth: 4 },
     walls: [{ x: 6, z: 0, width: 1, height: 3, depth: 10 }],
   },
   { // Level 3
     name: 'Level 3', hint: 'The goal is elevated — build words upward to launch your block into it!',
+    startY: 1,
     floor: { type: 'default' },
     endZone: { x: 10, z: 0, width: 4, depth: 4, elevation: 8 },
   },
   { // Level 4
     name: 'Level 4', hint: 'Two islands with a gap — build momentum to launch across to the far side!',
+    startY: 1,
     floor: {
       type: 'regions', regions: [
         { xMin: -8, xMax: 5, zMin: -5, zMax: 5, y: 0 },
@@ -2249,6 +2253,7 @@ const BUILTIN_LEVELS = [
   },
   { // Level 5
     name: 'Level 5', hint: 'Letter zones ahead! -L dissolves words CONTAINING L. +L dissolves words MISSING L. Reach the elevated goal!',
+    startY: 1,
     floor: {
       type: 'regions', regions: [
         { xMin: -8, xMax: 22, zMin: -2, zMax: 2, y: 0 },
@@ -2271,21 +2276,21 @@ const BUILTIN_LEVELS = [
         { xMin: 20, xMax: 30, zMin: -4, zMax: 4, y: 0 },
       ]
     },
-    startY: 10,
+    startY: 11,
     endZone: { x: 25, z: 0, width: 4, depth: 4 },
     zipLines: [{ x1: 3, y1: 15, z1: 0, x2: 21, y2: 5, z2: 0, radius: 0.3 }],
   },
   { // Level 7
     name: 'Level 7', hint: 'No time to plan — you\'re already sliding! Build fast and launch across the gap!',
-    startY: 9,
+    startY: 10,
     floor: {
       type: 'regions', regions: [
         { xMin: -4, xMax: 1, zMin: -2, zMax: 2, y: 9 },   // small starting platform
-        { xMin: 22, xMax: 27, zMin: -2, zMax: 2, y: -2 }, // short ice lane
-        { xMin: 36, xMax: 42, zMin: -2, zMax: 2, y: -2 }, // landing platform
+        { xMin: 22, xMax: 27, zMin: -2, zMax: 2, y: -3 }, // short ice lane
+        { xMin: 36, xMax: 42, zMin: -2, zMax: 2, y: -3 }, // landing platform
       ]
     },
-    endZone: { x: 39, z: 0, width: 4, depth: 4, elevation: -1 },
+    endZone: { x: 39, z: 0, width: 4, depth: 4, elevation: -2 },
     ramps: [
       // 2 non-icy entry ramps — gentle slope from the starting platform
       ...[-1, 0, 1].map(dz => ({ x: 1, y: 9.5, z: dz, slope: '2:1', direction: '+x', icy: false })),
@@ -2296,14 +2301,14 @@ const BUILTIN_LEVELS = [
       ).flat(),
     ],
     iceBlocks: Array.from({ length: 5 }, (_, i) =>
-      [-1, 0, 1].map(dz => ({ x: 22 + i, y: -2, z: dz }))
+      [-1, 0, 1].map(dz => ({ x: 22 + i, y: -3, z: dz }))
     ).flat(),
     // Gap: x=27..35 = 9 blocks wide
   },
   { // Level 8
     name: 'Level 8', hint: 'The goal is directly below — build downward to reach it!',
 
-    startY: 10,
+    startY: 11,
     floor: {
       type: 'regions', regions: [
         { xMin: -5, xMax: 5, zMin: -5, zMax: 5, y: 10 }, // elevated starting platform only
@@ -2313,7 +2318,7 @@ const BUILTIN_LEVELS = [
   },
   { // Level 9
     name: 'Level 9', hint: 'Verbs only! Every word must be an action — push, run, fling, jump!',
-
+    startY: 1,
     floor: { type: 'default' },
     endZone: { x: 10, z: 0, width: 4, depth: 4 },
     verbOnly: true,

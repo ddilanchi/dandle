@@ -1060,22 +1060,22 @@ document.getElementById('btn-clear').addEventListener('click', () => {
   rebuildStartIndicators(); updateHighlight(); updatePanel(); autoSave();
 });
 
-// ── Builtin templates ──
+// ── Builtin templates — synced with BUILTIN_LEVELS in game.js ──
 const BUILTIN_LEVELS = [
-  { name: 'Level 1', hint: 'Build words to push your structure into the red zone!',
-    floor: { type: 'default' }, endZone: { x: 10, z: 0, width: 4, depth: 4 } },
-  { name: 'Level 2', hint: 'A wall blocks the way!',
-    floor: { type: 'default' }, endZone: { x: 12, z: 0, width: 4, depth: 4 },
+  { name: 'Level 1', hint: 'Place words to push your block — get any cube into the red beacon!',
+    startY: 1, floor: { type: 'default' }, endZone: { x: 10, z: 0, width: 4, depth: 4 } },
+  { name: 'Level 2', hint: 'A wall blocks the direct path — go around it or build over it!',
+    startY: 1, floor: { type: 'default' }, endZone: { x: 12, z: 0, width: 4, depth: 4 },
     walls: [{ x: 6, z: 0, width: 1, height: 3, depth: 10 }] },
-  { name: 'Level 3', hint: 'The goal is in the air!',
-    floor: { type: 'default' }, endZone: { x: 10, z: 0, width: 4, depth: 4, elevation: 8 } },
-  { name: 'Level 4', hint: 'Two islands!',
-    floor: { type: 'regions', regions: [
+  { name: 'Level 3', hint: 'The goal is elevated — build words upward to launch your block into it!',
+    startY: 1, floor: { type: 'default' }, endZone: { x: 10, z: 0, width: 4, depth: 4, elevation: 8 } },
+  { name: 'Level 4', hint: 'Two islands with a gap — build momentum to launch across to the far side!',
+    startY: 1, floor: { type: 'regions', regions: [
       { xMin: -8, xMax: 5, zMin: -5, zMax: 5, y: 0 },
       { xMin: 9, xMax: 18, zMin: -5, zMax: 5, y: 0 },
     ]}, endZone: { x: 14, z: 0, width: 4, depth: 4 } },
-  { name: 'Level 5', hint: 'Letter zones!',
-    floor: { type: 'regions', regions: [{ xMin: -8, xMax: 22, zMin: -2, zMax: 2, y: 0 }] },
+  { name: 'Level 5', hint: 'Letter zones ahead! -L dissolves words CONTAINING L. +L dissolves words MISSING L. Reach the elevated goal!',
+    startY: 1, floor: { type: 'regions', regions: [{ xMin: -8, xMax: 22, zMin: -2, zMax: 2, y: 0 }] },
     endZone: { x: 18, z: 0, width: 4, depth: 4, elevation: 8 },
     letterZones: [
       { x: 5, z: 0, size: 3, type: '-', letter: 'random' },
@@ -1084,20 +1084,20 @@ const BUILTIN_LEVELS = [
       { x: 14, z: 0, size: 3, type: '+', letter: 'random' },
       { x: 17, z: 0, size: 3, type: '-', letter: 'random' },
     ] },
-  { name: 'Level 6', hint: 'Zip line!',
-    floor: { type: 'regions', regions: [
+  { name: 'Level 6', hint: 'You\'re on a high platform with a zip line — build words to push your block onto the line and ride it across!',
+    startY: 11, floor: { type: 'regions', regions: [
       { xMin: -6, xMax: 4, zMin: -4, zMax: 4, y: 10 },
       { xMin: 20, xMax: 30, zMin: -4, zMax: 4, y: 0 },
-    ]}, startY: 10, endZone: { x: 25, z: 0, width: 4, depth: 4 },
+    ]}, endZone: { x: 25, z: 0, width: 4, depth: 4 },
     zipLines: [{ x1: 3, y1: 15, z1: 0, x2: 21, y2: 5, z2: 0, radius: 0.3 }] },
   { name: 'Level 7', hint: 'No time to plan — you\'re already sliding! Build fast and launch across the gap!',
-    startY: 9,
+    startY: 10,
     floor: { type: 'regions', regions: [
       { xMin: -4, xMax: 1, zMin: -2, zMax: 2, y: 9 },
-      { xMin: 22, xMax: 27, zMin: -2, zMax: 2, y: -2 },
-      { xMin: 36, xMax: 42, zMin: -2, zMax: 2, y: -2 },
+      { xMin: 22, xMax: 27, zMin: -2, zMax: 2, y: -3 },
+      { xMin: 36, xMax: 42, zMin: -2, zMax: 2, y: -3 },
     ]},
-    endZone: { x: 39, z: 0, width: 4, depth: 4, elevation: -1 },
+    endZone: { x: 39, z: 0, width: 4, depth: 4, elevation: -2 },
     ramps: [
       ...[-1, 0, 1].map(dz => ({ x: 1, y: 9.5, z: dz, slope: '2:1', direction: '+x', icy: false })),
       ...[-1, 0, 1].map(dz => ({ x: 2, y: 9.0, z: dz, slope: '2:1', direction: '+x', icy: false })),
@@ -1106,18 +1106,18 @@ const BUILTIN_LEVELS = [
       ).flat(),
     ],
     iceBlocks: Array.from({ length: 5 }, (_, i) =>
-      [-1, 0, 1].map(dz => ({ x: 22 + i, y: -2, z: dz }))
+      [-1, 0, 1].map(dz => ({ x: 22 + i, y: -3, z: dz }))
     ).flat(),
   },
   { name: 'Level 8', hint: 'The goal is directly below — build downward to reach it!',
-    startY: 10,
+    startY: 11,
     floor: { type: 'regions', regions: [
       { xMin: -5, xMax: 5, zMin: -5, zMax: 5, y: 10 },
     ]},
     endZone: { x: 0, z: 0, width: 8, depth: 8, elevation: 0 },
   },
   { name: 'Level 9', hint: 'Verbs only! Every word must be an action — push, run, fling, jump!',
-    floor: { type: 'default' },
+    startY: 1, floor: { type: 'default' },
     endZone: { x: 10, z: 0, width: 4, depth: 4 },
     verbOnly: true,
   },

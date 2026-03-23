@@ -1,7 +1,7 @@
 import { getRandomWord, isValidWord, getWordTypes, isVerb, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v5.9.22';
+const VERSION = 'v5.9.23';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -180,6 +180,7 @@ async function initPhysics() {
 
 // ── Physics constants ──
 const CUBE_HALF = 0.5;
+const CUBE_MASS = 0.3;          // lighter cubes = stiffer feel, less sag
 const STRUCT_FRICTION = 0.1;
 const STRUCT_RESTITUTION = 0.02;
 const STATIC_FRICTION = 0.8;
@@ -474,14 +475,14 @@ function createStructureCube(letter, gx, gy, gz, wordIdx) {
   }
 
   const aggregate = new BABYLON.PhysicsAggregate(mesh, BABYLON.PhysicsShapeType.BOX, {
-    mass: 1,
+    mass: CUBE_MASS,
     friction: STRUCT_FRICTION,
     restitution: STRUCT_RESTITUTION,
   }, scene);
 
-  // Damping
-  aggregate.body.setLinearDamping(0.15);
-  aggregate.body.setAngularDamping(0.15);
+  // Damping — higher values reduce wobble
+  aggregate.body.setLinearDamping(0.4);
+  aggregate.body.setAngularDamping(0.6);
 
   // Copy neighbor velocity so constraint doesn't jerk
   for (const other of cubes) {
@@ -766,6 +767,24 @@ function createEndZone(x, z, w, d, y = 0) {
     new BABYLON.Vector3(x - w / 2, y, z - d / 2),
     new BABYLON.Vector3(x + w / 2, y + 2, z + d / 2)
   );
+
+  // Floating arrow indicators pointing down at the end zone
+  const arrowMat = new BABYLON.StandardMaterial('ezArrowMat', scene);
+  arrowMat.diffuseColor = new BABYLON.Color3(1, 0.3, 0.2);
+  arrowMat.emissiveColor = new BABYLON.Color3(1, 0.2, 0.1);
+  arrowMat.alpha = 0.6;
+  arrowMat.backFaceCulling = false;
+  for (let i = 0; i < 3; i++) {
+    const arrow = BABYLON.MeshBuilder.CreateCylinder('ezArrow' + i, {
+      diameterTop: 0, diameterBottom: 1.2, height: 1.0, tessellation: 4
+    }, scene);
+    arrow.material = arrowMat;
+    arrow.rotation.x = Math.PI; // point downward
+    arrow.position.set(x, y + 3 + i * 1.8, z);
+    arrow.isPickable = false;
+    arrow.metadata = { ezArrow: true, baseY: y + 3 + i * 1.8, index: i };
+    levelObstacles.push(arrow);
+  }
 
   // Support pillar if elevated above ground
   if (y > 0) {
@@ -2364,11 +2383,22 @@ function loadLevelFromConfig(config) {
   placeWord(word, 0, startZ, 'z+', 0, false, startY);
   lettersUsed = word.length;
 
-  // Camera
-  camera.target = new BABYLON.Vector3(0, startY, 0);
-  camera.alpha = -Math.PI / 4;
+  // Camera — frame both the construct and the end zone
+  const ez = config.endZone;
+  if (ez) {
+    const midX = ez.x / 2, midZ = ez.z / 2;
+    const midY = ((ez.elevation || 0) + startY) / 2;
+    camera.target = new BABYLON.Vector3(midX, midY, midZ);
+    // Angle the camera so it looks from behind the construct toward the goal
+    camera.alpha = Math.atan2(ez.z, ez.x) + Math.PI + Math.PI / 6;
+    const dist = Math.sqrt(ez.x * ez.x + ez.z * ez.z);
+    camera.radius = Math.max(18, dist * 0.8);
+  } else {
+    camera.target = new BABYLON.Vector3(0, startY, 0);
+    camera.alpha = -Math.PI / 4;
+    camera.radius = 16;
+  }
   camera.beta = Math.PI / 3;
-  camera.radius = 16;
 
   // End zone
   if (config.endZone) {
@@ -2801,6 +2831,14 @@ function animateEndZone(time) {
     endZoneBeacon.material.alpha = 0.15 + pulse * 0.1;
     endZoneBeacon.material.emissiveColor.r = 1;
     endZoneBeacon.material.emissiveColor.g = 0.2 + pulse * 0.1;
+  }
+  // Animate floating arrows — bob up and down with staggered timing
+  for (const obs of levelObstacles) {
+    if (obs.metadata?.ezArrow) {
+      const i = obs.metadata.index;
+      obs.position.y = obs.metadata.baseY + Math.sin(time * 2.5 + i * 1.2) * 0.4;
+      obs.material.alpha = 0.4 + Math.sin(time * 3 + i) * 0.2;
+    }
   }
 }
 

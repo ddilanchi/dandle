@@ -5,7 +5,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Dandle</title>
-  <link rel="stylesheet" href="css/style.css?v=5.9.21">
+  <link rel="stylesheet" href="css/style.css?v=5.9.22">
   <script src="https://cdn.babylonjs.com/babylon.js"></script>
   <script src="https://cdn.babylonjs.com/havok/HavokPhysics_umd.js"></script>
 </head>
@@ -20,7 +20,7 @@
       <button id="edit-level-btn">Edit</button>
       <button id="settings-btn">&#9881;</button>
     </div>
-    <div id="hint">Click a cube, type a word. Shift+WASD/QE: move selection. Shift+Space: cycle direction.</div>
+    <div id="hint"></div>
     <div id="selected-info"></div>
     <div id="word-input-container" class="hidden">
       <input type="text" id="word-input" placeholder="Type a word..." autocomplete="off" />
@@ -125,7 +125,7 @@
         </div>
         <div class="rule-item">
           <span class="rule-icon">&#9000;</span>
-          <span>Shift+WASD/QE: move selection | Shift+Space: cycle direction</span>
+          <span>Tab: cycle direction | Shift+WASD: move selection</span>
         </div>
       </div>
       <div id="intro-loader">
@@ -170,7 +170,7 @@
       }
     });
   </script>
-  <script type="module" src="js/game.js?v=5.9.21"></script>
+  <script type="module" src="js/game.js?v=5.9.22"></script>
 </body>
 
 </html>

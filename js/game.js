@@ -1,7 +1,7 @@
 import { getRandomWord, isValidWord, getWordTypes, isVerb, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v5.9.21';
+const VERSION = 'v5.9.22';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -2520,7 +2520,12 @@ scene.onPointerObservable.add((pointerInfo) => {
       break;
     }
     case BABYLON.PointerEventTypes.POINTERUP: {
-      if (isDrag || levelComplete) return;
+      if (isDrag) {
+        // After camera orbit, refocus input so typing resumes
+        if (selectedCube && !levelComplete) wordInput.focus();
+        return;
+      }
+      if (levelComplete) return;
 
       const pickResult = scene.pick(evt.clientX, evt.clientY, (mesh) => {
         return mesh.metadata && mesh.metadata.cube && cubes.includes(mesh.metadata.cube);
@@ -2558,6 +2563,11 @@ submitBtn.addEventListener('click', submitWord);
 // No auto-refocus on blur — let canvas keep focus for camera orbiting
 wordInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { submitWord(); return; }
+  if (e.key === 'Tab') {
+    e.preventDefault();
+    _handleNavKey(' '); // cycle direction
+    return;
+  }
   if (e.key.startsWith('Arrow')) return;
   // Shift+letter/space = navigation. Ignore bare modifier keys.
   if (e.shiftKey && e.key.length === 1 && _handleNavKey(e.key.toUpperCase())) {
@@ -2682,9 +2692,16 @@ window.addEventListener('keydown', (e) => {
   }
 });
 
-// ── Global shift nav ──
+// ── Global shift nav + Tab direction cycle ──
 window.addEventListener('keydown', (e) => {
-  if (!e.shiftKey || levelComplete || paused || _placementQueue) return;
+  if (levelComplete || paused || _placementQueue) return;
+  // Tab cycles direction (no modifier needed)
+  if (e.key === 'Tab' && selectedCube) {
+    e.preventDefault();
+    _handleNavKey(' ');
+    return;
+  }
+  if (!e.shiftKey) return;
   if (e.key.length !== 1) return; // ignore bare modifier keys
   const key = e.key.toUpperCase();
   if ('WASDEQ '.includes(key) || key === ' ') {
@@ -2915,35 +2932,35 @@ let _tutTimer = null;
 const TUTORIAL_STEPS = [
   {
     text: 'Click a letter cube to select it',
-    keys: ['Left Click'],
+    keys: ['Click'],
     trigger: 'select',
   },
   {
-    text: 'Type a word containing that letter, then press Enter to place it',
-    keys: ['Enter'],
+    text: 'Type a word containing that letter, then press Enter',
+    keys: ['Type', '+', 'Enter'],
     trigger: 'place',
   },
   {
-    text: 'Cycle placement direction before placing',
-    keys: ['Shift', '+', 'Space'],
+    text: 'Press Tab to change which direction your next word will go',
+    keys: ['Tab'],
     trigger: 'direction',
   },
   {
-    text: 'Navigate between cubes (camera-relative, Q/E for up/down)',
-    keys: ['Shift', '+', 'W', 'A', 'S', 'D', 'Q', 'E'],
+    text: 'Hold Shift + WASD to jump between cubes, Q/E for up/down',
+    keys: ['Shift', '+', 'W', 'A', 'S', 'D'],
     trigger: 'navigate',
   },
   {
-    text: 'Orbit the camera by dragging, scroll to zoom, middle-click to pan',
-    keys: ['Left Drag', 'Scroll', 'Middle Click'],
+    text: 'Drag to orbit the camera, scroll to zoom',
+    keys: ['Drag', 'Scroll'],
     trigger: 'auto',
     delay: 4000,
   },
   {
-    text: 'Push your structure into the red zone to win!',
+    text: 'New letters push the structure — get any cube into the red beacon!',
     keys: [],
     trigger: 'auto',
-    delay: 3000,
+    delay: 4000,
   },
 ];
 
@@ -2979,13 +2996,6 @@ function advanceTutorial(trigger) {
 
 function startTutorial() {
   if (currentLevel !== 1) {
-    tutOverlay.classList.add('hidden');
-    return;
-  }
-  // Check if player has completed level 1 before — skip tutorial
-  const unlocked = parseInt(localStorage.getItem('dandle_unlocked') || '1', 10);
-  if (unlocked > 1) {
-    tutorialDone = true;
     tutOverlay.classList.add('hidden');
     return;
   }

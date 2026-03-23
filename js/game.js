@@ -1,7 +1,7 @@
 import { getRandomWord, isValidWord, getWordTypes, isVerb, initWordNet, getLoadProgress, isLoadDone, loadFailed } from './wordlist.js';
 import { AudioManager } from './audio.js';
 
-const VERSION = 'v5.9.20';
+const VERSION = 'v5.9.21';
 
 // ── DOM ──
 const canvas = document.getElementById('game-canvas');
@@ -2357,11 +2357,11 @@ function loadLevelFromConfig(config) {
     buildFloor();
   }
 
-  // Starting word
+  // Starting word (placed along +Z so it faces toward the end zone)
   const word = getRandomWord();
-  const startX = -Math.floor(word.length / 2);
+  const startZ = -Math.floor(word.length / 2);
   const startY = config.startY || 0;
-  placeWord(word, startX, 0, 'x+', 0, false, startY);
+  placeWord(word, 0, startZ, 'z+', 0, false, startY);
   lettersUsed = word.length;
 
   // Camera

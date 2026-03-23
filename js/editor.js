@@ -222,9 +222,9 @@ function rebuildStartIndicators() {
 
   const y = startY;
   for (let i = 0; i < 5; i++) {
-    const x = -2 + i;
+    const z = -2 + i;
     const mesh = BABYLON.MeshBuilder.CreateBox('start_' + i, { width: 0.94, height: 0.94, depth: 0.94 }, scene);
-    mesh.position.set(x + 0.5, y + 1.5, 0.5); // one block above floor
+    mesh.position.set(0.5, y + 1.5, z + 0.5); // one block above floor, along +Z
     const mat = new BABYLON.StandardMaterial('startMat_' + i, scene);
     mat.diffuseColor = new BABYLON.Color3(0.4, 0.8, 1);
     mat.emissiveColor = new BABYLON.Color3(0.1, 0.2, 0.4);
